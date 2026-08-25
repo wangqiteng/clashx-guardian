@@ -1,0 +1,9 @@
+build/
+dist/
+.DS_Store
+work/
+outputs/*.zip
+outputs/*.sha256
+outputs/**/*.app/
+outputs/clashx-guardian-audit/
+outputs/clashx-guardian 2/

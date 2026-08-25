@@ -1,0 +1,59 @@
+# 仅在这些 Wi-Fi 上启用。多个值使用英文逗号分隔。
+TARGET_SSIDS=YOUR_WIFI_NAME
+
+# ClashX Pro 本地 HTTP 代理与控制接口。
+PROXY_URL=http://127.0.0.1:7890
+CONTROLLER_URL=http://127.0.0.1:9090
+# auto 会从 ClashX Pro 用户偏好中读取，不把密钥复制到本文件。
+CONTROLLER_SECRET=auto
+
+# ClashX Pro 菜单中需要自动切换的 Selector 策略组名称，区分大小写。
+# 常见名称：Proxy、PROXY、节点选择、代理。
+PROXY_GROUP=Proxy
+
+# Codex 没运行时暂停所有探测和切换，降低不必要的后台活动。
+REQUIRE_CODEX_RUNNING=true
+
+# 默认要求 macOS “设置为系统代理”已经开启。
+# 如果你只使用 ClashX Pro 增强模式/TUN，请改为 false。
+REQUIRE_SYSTEM_PROXY=true
+
+# Codex 桌面端/ChatGPT 登录模式的实际后端入口；至少一个主探针必须成功。
+# 如果你只用 OPENAI_API_KEY，可改为 https://api.openai.com/v1/responses
+PRIMARY_URLS=https://chatgpt.com/backend-api/codex
+
+# 同时要求至少一个独立外网探针成功，避免把 OpenAI 单站故障误认为整个节点断网。
+SECONDARY_URLS=https://www.gstatic.com/generate_204,https://www.cloudflare.com/cdn-cgi/trace
+REQUIRED_SUCCESSES=1
+
+# 节点测速也走 ChatGPT 域名，让排序更贴近 Codex 的实际线路质量。
+DELAY_TEST_URL=https://chatgpt.com/
+
+# 每 5 秒检查一次；连续失败 20 秒才切换；两次切换至少间隔 120 秒。
+CHECK_INTERVAL=5
+FAILURE_SECONDS=20
+SWITCH_COOLDOWN=120
+# 切换失败后较快重试；成功切换仍使用上面的较长冷却。
+FAILED_RETRY_COOLDOWN=30
+# 达到阈值后再确认一次，过滤刚好在阈值附近恢复的抖动。
+CONFIRMATION_DELAY=3
+PROBE_TIMEOUT=6
+
+# 最多测速 8 个候选，每批并行测 3 个，最多实际尝试 3 个。
+DELAY_TIMEOUT_MS=2500
+MAX_CANDIDATES=8
+MAX_SWITCH_ATTEMPTS=3
+MAX_PARALLEL_TESTS=3
+# 两个可测速节点都无法完成 Codex/外网验证时，先按公共故障处理，避免盲目切换。
+COMMON_FAILURE_LIMIT=2
+POST_SWITCH_WAIT=2
+
+# 不允许自动选择这些特殊路由。可改成 Perl 正则表达式。
+EXCLUDE_PATTERN=^(?:DIRECT|REJECT|PASS)$
+
+LOG_FILE=~/Library/Logs/ClashXGuardian.log
+LOCK_FILE=~/Library/Caches/ClashXGuardian.lock
+STATUS_FILE=~/Library/Application Support/ClashXGuardian/status.json
+TRIGGER_FILE=~/Library/Application Support/ClashXGuardian/check-now
+# 只保存节点可靠性统计和最近事件，不保存控制密钥。
+RUNTIME_STATE_FILE=~/Library/Application Support/ClashXGuardian/runtime-state.json
