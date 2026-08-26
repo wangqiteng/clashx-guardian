@@ -11,6 +11,9 @@ typedef NS_ENUM(NSInteger, GuardianAppearance) {
     GuardianAppearanceError, GuardianAppearanceInactive, GuardianAppearanceStopped,
 };
 
+static NSImage *GuardianStatusImage(GuardianAppearance appearance);
+static NSImage *GuardianApplicationIconImage(void);
+
 static GuardianAppearance BaseAppearance(NSString *state, NSString *level) {
     if ([state isEqualToString:@"healthy"]) return GuardianAppearanceHealthy;
     if ([state isEqualToString:@"unhealthy"] || [state isEqualToString:@"cooldown"]) return GuardianAppearanceWarning;
@@ -44,12 +47,12 @@ static NSDictionary *ReadStatus(NSURL *url, NSError **error) {
 
 static NSColor *AppearanceColor(GuardianAppearance value) {
     switch (value) {
-        case GuardianAppearanceHealthy: return NSColor.systemGreenColor;
-        case GuardianAppearanceWarning: return NSColor.systemOrangeColor;
-        case GuardianAppearanceWorking: return NSColor.systemBlueColor;
-        case GuardianAppearanceError: return NSColor.systemRedColor;
-        case GuardianAppearanceInactive: return NSColor.secondaryLabelColor;
-        case GuardianAppearanceStopped: return NSColor.systemGrayColor;
+        case GuardianAppearanceHealthy: return [NSColor colorWithSRGBRed:0.10 green:0.78 blue:0.36 alpha:1];
+        case GuardianAppearanceWarning: return [NSColor colorWithSRGBRed:1.00 green:0.58 blue:0.08 alpha:1];
+        case GuardianAppearanceWorking: return [NSColor colorWithSRGBRed:0.12 green:0.55 blue:0.98 alpha:1];
+        case GuardianAppearanceError: return [NSColor colorWithSRGBRed:0.96 green:0.20 blue:0.22 alpha:1];
+        case GuardianAppearanceInactive: return [NSColor colorWithSRGBRed:0.48 green:0.50 blue:0.54 alpha:1];
+        case GuardianAppearanceStopped: return [NSColor colorWithSRGBRed:0.38 green:0.40 blue:0.44 alpha:1];
     }
 }
 
@@ -77,15 +80,136 @@ static NSString *SummaryText(NSDictionary *status, BOOL isRunning, GuardianAppea
     return [NSString stringWithFormat:@"自动保护：已开启 · %@", AppearanceLabel(appearance)];
 }
 
-static NSString *AppearanceSymbol(GuardianAppearance value) {
-    switch (value) {
-        case GuardianAppearanceHealthy: return @"checkmark.shield.fill";
-        case GuardianAppearanceWarning: return @"exclamationmark.triangle.fill";
-        case GuardianAppearanceWorking: return @"arrow.triangle.2.circlepath.circle.fill";
-        case GuardianAppearanceError: return @"xmark.octagon.fill";
-        case GuardianAppearanceInactive: return @"pause.circle.fill";
-        case GuardianAppearanceStopped: return @"power.circle.fill";
+static NSImage *GuardianStatusImage(GuardianAppearance appearance) {
+    const NSInteger scale = 2;
+    NSSize size = NSMakeSize(18, 18);
+    NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc]
+        initWithBitmapDataPlanes:NULL pixelsWide:36 pixelsHigh:36 bitsPerSample:8 samplesPerPixel:4
+        hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+    bitmap.size = size;
+    NSGraphicsContext *context = [NSGraphicsContext graphicsContextWithBitmapImageRep:bitmap];
+    [NSGraphicsContext saveGraphicsState];
+    [NSGraphicsContext setCurrentContext:context];
+    CGContextScaleCTM(context.CGContext, scale, scale);
+    CGContextSetShouldAntialias(context.CGContext, true);
+    CGContextClearRect(context.CGContext, CGRectMake(0, 0, 18, 18));
+
+    NSBezierPath *shield = [NSBezierPath bezierPath];
+    [shield moveToPoint:NSMakePoint(9, 17)];
+    [shield curveToPoint:NSMakePoint(2.5, 14.4) controlPoint1:NSMakePoint(7.1, 16.1) controlPoint2:NSMakePoint(4.9, 15.0)];
+    [shield lineToPoint:NSMakePoint(2.5, 9.2)];
+    [shield curveToPoint:NSMakePoint(9, 1.2) controlPoint1:NSMakePoint(2.5, 5.6) controlPoint2:NSMakePoint(5.2, 2.7)];
+    [shield curveToPoint:NSMakePoint(15.5, 9.2) controlPoint1:NSMakePoint(12.8, 2.7) controlPoint2:NSMakePoint(15.5, 5.6)];
+    [shield lineToPoint:NSMakePoint(15.5, 14.4)];
+    [shield curveToPoint:NSMakePoint(9, 17) controlPoint1:NSMakePoint(13.1, 15.0) controlPoint2:NSMakePoint(10.9, 16.1)];
+    [shield closePath];
+    [AppearanceColor(appearance) setFill];
+    [shield fill];
+
+    [NSColor.whiteColor setStroke];
+    [NSColor.whiteColor setFill];
+    for (NSNumber *radiusValue in @[@2.65, @4.65]) {
+        NSBezierPath *wave = [NSBezierPath bezierPath];
+        wave.lineWidth = 1.35;
+        wave.lineCapStyle = NSLineCapStyleRound;
+        [wave appendBezierPathWithArcWithCenter:NSMakePoint(9, 5.0)
+                                         radius:radiusValue.doubleValue
+                                     startAngle:43
+                                       endAngle:137];
+        [wave stroke];
     }
+    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(8.15, 4.0, 1.7, 1.7)] fill];
+    [context flushGraphics];
+    [NSGraphicsContext restoreGraphicsState];
+
+    NSImage *image = [[NSImage alloc] initWithSize:size];
+    [image addRepresentation:bitmap];
+    image.template = NO;
+    image.accessibilityDescription = [NSString stringWithFormat:@"ClashX Guardian：%@", AppearanceLabel(appearance)];
+    return image;
+}
+
+static NSImage *GuardianApplicationIconImage(void) {
+    const NSInteger pixels = 1024;
+    NSSize size = NSMakeSize(pixels, pixels);
+    NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc]
+        initWithBitmapDataPlanes:NULL pixelsWide:pixels pixelsHigh:pixels bitsPerSample:8 samplesPerPixel:4
+        hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+    bitmap.size = size;
+    NSGraphicsContext *context = [NSGraphicsContext graphicsContextWithBitmapImageRep:bitmap];
+    [NSGraphicsContext saveGraphicsState];
+    [NSGraphicsContext setCurrentContext:context];
+    CGContextSetShouldAntialias(context.CGContext, true);
+    CGContextClearRect(context.CGContext, CGRectMake(0, 0, pixels, pixels));
+
+    NSBezierPath *tile = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(64, 64, 896, 896)
+                                                         xRadius:196 yRadius:196];
+    NSGradient *tileGradient = [[NSGradient alloc]
+        initWithStartingColor:[NSColor colorWithSRGBRed:0.96 green:0.98 blue:1.00 alpha:1]
+                  endingColor:[NSColor colorWithSRGBRed:0.84 green:0.89 blue:0.95 alpha:1]];
+    [tileGradient drawInBezierPath:tile angle:90];
+    [[NSColor colorWithWhite:1 alpha:0.72] setStroke];
+    tile.lineWidth = 4;
+    [tile stroke];
+
+    NSBezierPath *shield = [NSBezierPath bezierPath];
+    [shield moveToPoint:NSMakePoint(512, 836)];
+    [shield curveToPoint:NSMakePoint(274, 724) controlPoint1:NSMakePoint(444, 802) controlPoint2:NSMakePoint(360, 750)];
+    [shield lineToPoint:NSMakePoint(274, 498)];
+    [shield curveToPoint:NSMakePoint(512, 190) controlPoint1:NSMakePoint(274, 354) controlPoint2:NSMakePoint(372, 242)];
+    [shield curveToPoint:NSMakePoint(750, 498) controlPoint1:NSMakePoint(652, 242) controlPoint2:NSMakePoint(750, 354)];
+    [shield lineToPoint:NSMakePoint(750, 724)];
+    [shield curveToPoint:NSMakePoint(512, 836) controlPoint1:NSMakePoint(664, 750) controlPoint2:NSMakePoint(580, 802)];
+    [shield closePath];
+
+    NSBezierPath *shieldShadow = [shield copy];
+    NSAffineTransform *shadowTransform = [NSAffineTransform transform];
+    [shadowTransform translateXBy:0 yBy:-12];
+    [shieldShadow transformUsingAffineTransform:shadowTransform];
+    [[NSColor colorWithSRGBRed:0.18 green:0.30 blue:0.34 alpha:0.12] setFill];
+    [shieldShadow fill];
+
+    NSGradient *shieldGradient = [[NSGradient alloc]
+        initWithStartingColor:[NSColor colorWithSRGBRed:0.65 green:0.82 blue:0.70 alpha:1]
+                  endingColor:[NSColor colorWithSRGBRed:0.36 green:0.65 blue:0.50 alpha:1]];
+    [shieldGradient drawInBezierPath:shield angle:90];
+    [[NSColor colorWithWhite:1 alpha:0.45] setStroke];
+    shield.lineWidth = 6;
+    [shield stroke];
+
+    NSColor *glyphColor = [NSColor colorWithSRGBRed:1.00 green:0.99 blue:0.96 alpha:1];
+    [glyphColor setStroke];
+    [glyphColor setFill];
+    for (NSNumber *radiusValue in @[@170, @286]) {
+        NSBezierPath *wave = [NSBezierPath bezierPath];
+        wave.lineWidth = 72;
+        wave.lineCapStyle = NSLineCapStyleRound;
+        [wave appendBezierPathWithArcWithCenter:NSMakePoint(512, 338)
+                                         radius:radiusValue.doubleValue
+                                     startAngle:43
+                                       endAngle:137];
+        [wave stroke];
+    }
+    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(468, 270, 88, 88)] fill];
+    [context flushGraphics];
+    [NSGraphicsContext restoreGraphicsState];
+
+    NSImage *image = [[NSImage alloc] initWithSize:size];
+    [image addRepresentation:bitmap];
+    image.template = NO;
+    image.accessibilityDescription = @"ClashX Guardian 网络守护";
+    return image;
+}
+
+static int WriteApplicationIcon(NSString *path) {
+    NSImage *image = GuardianApplicationIconImage();
+    NSBitmapImageRep *bitmap = (NSBitmapImageRep *)image.representations.firstObject;
+    NSData *png = [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+    if (!png || ![png writeToFile:path atomically:YES]) {
+        fprintf(stderr, "failed to write application icon: %s\n", path.UTF8String);
+        return 1;
+    }
+    return 0;
 }
 
 @interface GuardianAppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate>
@@ -262,18 +386,10 @@ static NSString *AppearanceSymbol(GuardianAppearance value) {
 - (void)updateButton:(GuardianAppearance)appearance tooltip:(NSString *)tooltip {
     NSStatusBarButton *button = self.statusItem.button;
     if (!button) return;
-    NSColor *color = AppearanceColor(appearance);
-    NSImageSymbolConfiguration *size = [NSImageSymbolConfiguration configurationWithPointSize:15 weight:NSFontWeightSemibold];
-    NSImageSymbolConfiguration *palette = [NSImageSymbolConfiguration configurationWithPaletteColors:@[color]];
-    NSImageSymbolConfiguration *configuration = [size configurationByApplyingConfiguration:palette];
-    NSImage *image = [[NSImage imageWithSystemSymbolName:AppearanceSymbol(appearance) accessibilityDescription:AppearanceLabel(appearance)]
-        imageWithSymbolConfiguration:configuration];
-    if (!image) image = [NSImage imageWithSystemSymbolName:@"circle.fill" accessibilityDescription:AppearanceLabel(appearance)];
-    image.template = NO;
     button.title = @"";
-    button.image = image;
+    button.image = GuardianStatusImage(appearance);
     button.imagePosition = NSImageOnly;
-    button.contentTintColor = color;
+    button.contentTintColor = nil;
     button.toolTip = tooltip;
     [button setAccessibilityLabel:[NSString stringWithFormat:@"ClashX Guardian：%@", AppearanceLabel(appearance)]];
 }
@@ -413,6 +529,27 @@ static int RunSelfTest(NSString *path) {
     NSDictionary *status = ReadStatus([NSURL fileURLWithPath:path], &error);
     if (!status) { fprintf(stderr, "self-test failed: %s\n", error.localizedDescription.UTF8String); return 1; }
     GuardianAppearance appearance = BaseAppearance(status[@"state"], status[@"level"]);
+    NSImage *statusImage = GuardianStatusImage(appearance);
+    if (!statusImage || statusImage.size.width != 18 || statusImage.size.height != 18 || statusImage.template) {
+        fprintf(stderr, "self-test failed: menu icon must be a non-template 18x18 image\n");
+        return 1;
+    }
+    NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithData:statusImage.TIFFRepresentation];
+    NSInteger coloredPixels = 0, whitePixels = 0;
+    for (NSInteger y = 0; y < bitmap.pixelsHigh; y++) {
+        for (NSInteger x = 0; x < bitmap.pixelsWide; x++) {
+            NSColor *pixel = [[bitmap colorAtX:x y:y] colorUsingColorSpace:NSColorSpace.deviceRGBColorSpace];
+            if (!pixel || pixel.alphaComponent < 0.5) continue;
+            CGFloat hue = 0, saturation = 0, brightness = 0, alpha = 0;
+            [pixel getHue:&hue saturation:&saturation brightness:&brightness alpha:&alpha];
+            if (saturation > 0.35 && brightness > 0.25) coloredPixels++;
+            if (saturation < 0.12 && brightness > 0.82) whitePixels++;
+        }
+    }
+    if (coloredPixels < 20 || whitePixels < 4) {
+        fprintf(stderr, "self-test failed: menu icon must combine a colored shield with a white network glyph\n");
+        return 1;
+    }
     NSString *summary = SummaryText(status, YES, appearance);
     if ([status[@"state"] isEqualToString:@"switching"] &&
         ![summary containsString:@"🇯🇵 日本 Y02 · 88 ms"]) {
@@ -426,6 +563,7 @@ static int RunSelfTest(NSString *path) {
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         if (argc == 3 && strcmp(argv[1], "--self-test") == 0) return RunSelfTest([NSString stringWithUTF8String:argv[2]]);
+        if (argc == 3 && strcmp(argv[1], "--render-app-icon") == 0) return WriteApplicationIcon([NSString stringWithUTF8String:argv[2]]);
         NSApplication *app = NSApplication.sharedApplication;
         GuardianAppDelegate *delegate = [GuardianAppDelegate new];
         app.delegate = delegate;

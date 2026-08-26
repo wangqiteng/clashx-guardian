@@ -15,18 +15,38 @@ INFO_PLIST="$APP_BUNDLE/Contents/Info.plist"
 STAGE_ROOT="$(/usr/bin/mktemp -d /private/tmp/clashx-guardian-build.XXXXXX)"
 STAGE_BUNDLE="$STAGE_ROOT/$DISPLAY_NAME.app"
 STAGE_MACOS="$STAGE_BUNDLE/Contents/MacOS"
+STAGE_RESOURCES="$STAGE_BUNDLE/Contents/Resources"
 STAGE_BINARY="$STAGE_MACOS/$APP_NAME"
 STAGE_PLIST="$STAGE_BUNDLE/Contents/Info.plist"
+STAGE_ICONSET="$STAGE_ROOT/AppIcon.iconset"
 trap 'rm -rf "$STAGE_ROOT"' EXIT
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
-mkdir -p "$BUILD_DIR" "$STAGE_MACOS"
+mkdir -p "$BUILD_DIR" "$STAGE_MACOS" "$STAGE_RESOURCES" "$STAGE_ICONSET"
 clang -fobjc-arc -Wall -Wextra -Werror \
   -framework Cocoa -framework UserNotifications \
   "$ROOT_DIR/Sources/ClashXGuardianStatus/main.m" -o "$STAGE_BINARY"
 "$STAGE_BINARY" --self-test "$ROOT_DIR/Tests/fixtures/healthy-status.json"
 "$STAGE_BINARY" --self-test "$ROOT_DIR/Tests/fixtures/switching-status.json"
 install -m 0755 "$STAGE_BINARY" "$BUILD_DIR/$APP_NAME"
+
+ICON_SOURCE="$STAGE_ROOT/GuardianAppIcon.png"
+"$STAGE_BINARY" --render-app-icon "$ICON_SOURCE"
+make_icon() {
+  local pixels="$1" output="$2"
+  /usr/bin/sips -z "$pixels" "$pixels" "$ICON_SOURCE" --out "$STAGE_ICONSET/$output" >/dev/null
+}
+make_icon 16 icon_16x16.png
+make_icon 32 icon_16x16@2x.png
+make_icon 32 icon_32x32.png
+make_icon 64 icon_32x32@2x.png
+make_icon 128 icon_128x128.png
+make_icon 256 icon_128x128@2x.png
+make_icon 256 icon_256x256.png
+make_icon 512 icon_256x256@2x.png
+make_icon 512 icon_512x512.png
+make_icon 1024 icon_512x512@2x.png
+/usr/bin/perl "$ROOT_DIR/script/build_icns.pl" "$STAGE_ICONSET" "$STAGE_RESOURCES/AppIcon.icns"
 
 cat >"$STAGE_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -37,19 +57,36 @@ cat >"$STAGE_PLIST" <<PLIST
   <key>CFBundleName</key><string>$DISPLAY_NAME</string>
   <key>CFBundleDisplayName</key><string>$DISPLAY_NAME</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>2.1.0</string>
-  <key>CFBundleVersion</key><string>3</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundleShortVersionString</key><string>2.2.0</string>
+  <key>CFBundleVersion</key><string>4</string>
   <key>LSMinimumSystemVersion</key><string>$MIN_SYSTEM_VERSION</string>
   <key>LSUIElement</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict></plist>
 PLIST
 plutil -lint "$STAGE_PLIST" >/dev/null
+if [[ ! -f "$STAGE_BUNDLE/Contents/Resources/AppIcon.icns" ]]; then
+  echo "build verification failed: AppIcon.icns is missing from the app bundle" >&2
+  exit 1
+fi
+if [[ "$(plutil -extract CFBundleIconFile raw "$STAGE_PLIST")" != "AppIcon" ]]; then
+  echo "build verification failed: CFBundleIconFile does not reference AppIcon" >&2
+  exit 1
+fi
+VERIFY_ICONSET="$STAGE_ROOT/VerifiedAppIcon.iconset"
+/usr/bin/iconutil -c iconset "$STAGE_RESOURCES/AppIcon.icns" -o "$VERIFY_ICONSET"
+if [[ ! -f "$VERIFY_ICONSET/icon_512x512@2x.png" ]]; then
+  echo "build verification failed: AppIcon.icns does not contain its 1024px representation" >&2
+  exit 1
+fi
 xattr -cr "$STAGE_BUNDLE"
 codesign --force --deep --sign - "$STAGE_BUNDLE" >/dev/null
 codesign --verify --deep --strict "$STAGE_BUNDLE"
 rm -rf "$APP_BUNDLE"
 /usr/bin/ditto --norsrc --noextattr "$STAGE_BUNDLE" "$APP_BUNDLE"
+xattr -cr "$APP_BUNDLE"
+codesign --verify --deep --strict "$APP_BUNDLE"
 
 open_app() { /usr/bin/open -n "$APP_BUNDLE"; }
 case "$MODE" in
