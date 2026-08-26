@@ -25,6 +25,7 @@ clang -fobjc-arc -Wall -Wextra -Werror \
   -framework Cocoa -framework UserNotifications \
   "$ROOT_DIR/Sources/ClashXGuardianStatus/main.m" -o "$STAGE_BINARY"
 "$STAGE_BINARY" --self-test "$ROOT_DIR/Tests/fixtures/healthy-status.json"
+"$STAGE_BINARY" --self-test "$ROOT_DIR/Tests/fixtures/switching-status.json"
 install -m 0755 "$STAGE_BINARY" "$BUILD_DIR/$APP_NAME"
 
 cat >"$STAGE_PLIST" <<PLIST
@@ -36,8 +37,8 @@ cat >"$STAGE_PLIST" <<PLIST
   <key>CFBundleName</key><string>$DISPLAY_NAME</string>
   <key>CFBundleDisplayName</key><string>$DISPLAY_NAME</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>2.0.0</string>
-  <key>CFBundleVersion</key><string>2</string>
+  <key>CFBundleShortVersionString</key><string>2.1.0</string>
+  <key>CFBundleVersion</key><string>3</string>
   <key>LSMinimumSystemVersion</key><string>$MIN_SYSTEM_VERSION</string>
   <key>LSUIElement</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>

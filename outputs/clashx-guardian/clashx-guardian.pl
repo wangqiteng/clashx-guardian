@@ -11,6 +11,9 @@ use POSIX qw(strftime);
 use Time::HiRes qw(time sleep);
 use URI::Escape qw(uri_escape_utf8);
 
+binmode STDOUT, ':encoding(UTF-8)';
+binmode STDERR, ':encoding(UTF-8)';
+
 my $config_path = $ARGV[0] || "$Bin/config.conf";
 my $self_test = grep { $_ eq '--self-test' } @ARGV;
 my $delay_self_test = grep { $_ eq '--delay-self-test' } @ARGV;
@@ -22,9 +25,8 @@ my $failure_seconds   = number_cfg('FAILURE_SECONDS', 20, 10, 3600);
 my $cooldown_seconds  = number_cfg('SWITCH_COOLDOWN', 120, 30, 86400);
 my $probe_timeout     = number_cfg('PROBE_TIMEOUT', 6, 2, 30);
 my $delay_timeout_ms  = number_cfg('DELAY_TIMEOUT_MS', 2500, 1000, 15000);
-my $max_candidates    = number_cfg('MAX_CANDIDATES', 8, 1, 100);
+my $benchmark_concurrency = number_cfg('MAX_BENCHMARK_CONCURRENCY', 64, 1, 256);
 my $max_attempts      = number_cfg('MAX_SWITCH_ATTEMPTS', 3, 1, 10);
-my $max_parallel      = number_cfg('MAX_PARALLEL_TESTS', 3, 1, 8);
 my $post_switch_wait  = number_cfg('POST_SWITCH_WAIT', 2, 0, 30);
 my $required_success  = number_cfg('REQUIRED_SUCCESSES', 1, 1, 20);
 my $failed_retry      = number_cfg('FAILED_RETRY_COOLDOWN', 30, 10, 600);
@@ -341,6 +343,14 @@ sub current_selected_node {
     return $data->{now};
 }
 
+sub confirmed_selected_node {
+    my ($target, $reader) = @_;
+    $reader ||= \&current_selected_node;
+    my $observed = $reader->();
+    return $target if defined($observed) && $observed eq $target;
+    return undef;
+}
+
 sub probe_url {
     my ($url) = @_;
     my @cmd = ('/usr/bin/curl', '--silent', '--show-error', '--output', '/dev/null',
@@ -411,32 +421,35 @@ sub switch_to_working_node {
 
     my $current = $data->{now} // '';
     my @all_candidates = grep { defined && length && $_ ne $current && $_ !~ $exclude_re } @{$data->{all}};
-    my @candidates = ranked_candidates(@all_candidates);
-    splice(@candidates, $max_candidates) if @candidates > $max_candidates;
-    if (@all_candidates) {
-        $candidate_cursor = ($candidate_cursor + $max_candidates) % scalar(@all_candidates);
-        save_runtime_state();
-    }
-    log_msg('INFO', "testing " . scalar(@candidates) . " candidates in '$group' (current='$current')");
+    $testing_total = scalar(@all_candidates);
+    $testing_index = 0;
+    $candidate_node = "ClashX 延迟测速 · $testing_total 个节点";
+    write_status('switching', 'WARN', 'running ClashX full latency benchmark');
+    log_msg('INFO', "running ClashX-style full benchmark for " . scalar(@all_candidates)
+        . " candidates in '$group' (current='$current')");
 
-    my @working = parallel_delay_tests(@candidates);
-
-    @working = sort {
-        node_score($b->[1]) <=> node_score($a->[1]) || $a->[0] <=> $b->[0]
-    } @working;
+    my @working = parallel_delay_tests(benchmark_parallel_limit(scalar(@all_candidates)), @all_candidates);
+    return 0 unless $running;
+    @working = sort_measured_candidates(@working);
+    log_msg('INFO', 'ClashX-style benchmark returned ' . scalar(@working) . ' reachable candidates');
     splice(@working, $max_attempts) if @working > $max_attempts;
     my $common_failures = 0;
     for my $candidate (@working) {
+        last unless $running;
         my ($delay, $name) = @$candidate;
-        $candidate_node = $name;
-        write_status('switching', 'WARN', "verifying candidate '$name'");
+        $candidate_node = "$name · ${delay} ms";
+        write_status('switching', 'WARN', "verifying lowest-latency candidate '$name' (${delay}ms)");
         my $put = controller_request('PUT', $path, { name => $name }, 5);
-        unless ($put->{success}) {
-            log_msg('WARN', "failed to select '$name': HTTP $put->{status}");
+        my $selected = confirmed_selected_node($name);
+        unless (defined $selected) {
+            log_msg('WARN', "selector did not confirm '$name' after PUT: HTTP $put->{status}");
             next;
         }
+        log_msg('WARN', "PUT for '$name' returned HTTP $put->{status}, but controller state confirms selection")
+            unless $put->{success};
         log_msg('INFO', "selected '$name' (${delay}ms); verifying connectivity");
         interruptible_sleep($post_switch_wait);
+        last unless $running;
         my $diagnosis = diagnose_connectivity();
         $last_diagnosis = $diagnosis;
         if ($diagnosis->{healthy}) {
@@ -444,7 +457,7 @@ sub switch_to_working_node {
             $last_healthy = time;
             $last_switch = time;
             record_node_result($name, 1, $delay);
-            record_event('switched', "已切换到 $name，Codex 线路恢复");
+            record_event('switched', "已切换到 $name（${delay} ms），Codex 线路恢复");
             save_runtime_state();
             log_msg('INFO', "node '$name' restored Codex connectivity (primary reachable, "
                 . $diagnosis->{secondarySuccesses} . '/' . scalar(@secondary_urls) . ' secondary probes)');
@@ -466,16 +479,25 @@ sub switch_to_working_node {
             last;
         }
     }
+    my $switch_failed_message = '候选节点均未通过完整连通性检查';
     if (length $current) {
         my $restore = controller_request('PUT', $path, { name => $current }, 5);
-        if ($restore->{success}) {
+        my $observed = current_selected_node();
+        if (defined($observed) && $observed eq $current) {
             $current_node = $current;
             log_msg('WARN', "all candidates failed; restored previous node '$current'");
+            $switch_failed_message .= '，已恢复原节点';
+        } elsif (defined($observed) && length($observed)) {
+            $current_node = $observed;
+            log_msg('ERROR', "restore PUT returned HTTP $restore->{status}; controller reports '$observed'");
+            $switch_failed_message .= "，当前节点为 $observed";
         } else {
-            log_msg('ERROR', "all candidates failed and previous node '$current' could not be restored");
+            $current_node = '';
+            log_msg('ERROR', "restore PUT returned HTTP $restore->{status}; active node could not be confirmed");
+            $switch_failed_message .= '，无法确认当前节点';
         }
     }
-    record_event('switch_failed', '候选节点均未通过完整连通性检查，已保留原节点');
+    record_event('switch_failed', $switch_failed_message);
     save_runtime_state();
     ($testing_index, $testing_total, $candidate_node) = (0, 0, '');
     return 0;
@@ -489,27 +511,61 @@ sub measure_candidate_delay {
     my $response = controller_request('GET', $candidate_path, undef, ($delay_timeout_ms / 1000) + 2);
     return undef unless $response->{success};
     my $data = eval { decode_json($response->{content}) };
-    return undef if $@ || ref($data) ne 'HASH' || ($data->{delay} // '') !~ /^\d+$/;
+    return undef if $@ || ref($data) ne 'HASH' || ($data->{delay} // '') !~ /^\d+$/
+        || $data->{delay} <= 0;
     return 0 + $data->{delay};
 }
 
+sub sort_measured_candidates {
+    my @valid = grep {
+        ref($_) eq 'ARRAY'
+            && defined($_->[0]) && $_->[0] =~ /^\d+$/ && $_->[0] > 0
+            && defined($_->[1]) && length($_->[1])
+    } @_;
+    return sort {
+        $a->[0] <=> $b->[0]
+            || node_score($b->[1]) <=> node_score($a->[1])
+            || $a->[1] cmp $b->[1]
+    } @valid;
+}
+
+sub benchmark_parallel_limit {
+    my ($candidate_count) = @_;
+    return 1 if !$candidate_count || $candidate_count < 1;
+    return $candidate_count < $benchmark_concurrency ? $candidate_count : $benchmark_concurrency;
+}
+
 sub parallel_delay_tests {
-    my (@candidates) = @_;
+    my ($parallel_limit, @candidates) = @_;
+    $parallel_limit = 1 if $parallel_limit < 1;
     my @working;
     $testing_total = scalar(@candidates);
     $testing_index = 0;
     while (@candidates && $running) {
-        my @batch = splice(@candidates, 0, $max_parallel);
+        my @batch = splice(@candidates, 0, $parallel_limit);
         my $first = $testing_index + 1;
         my $last = $testing_index + scalar(@batch);
-        $candidate_node = join(', ', @batch);
+        $candidate_node = "ClashX 延迟测速 · $first-$last/$testing_total";
         write_status('switching', 'WARN', "testing candidates $first-$last/$testing_total") unless $delay_self_test;
         my @children;
         for my $name (@batch) {
-            pipe(my $reader, my $writer) or next;
+            my ($reader, $writer);
+            unless (pipe($reader, $writer)) {
+                $testing_index++;
+                $candidate_node = "$name · 启动失败";
+                log_msg('WARN', "cannot create benchmark pipe for '$name': $!");
+                write_status('switching', 'WARN', "ClashX latency benchmark $testing_index/$testing_total")
+                    unless $delay_self_test;
+                next;
+            }
             my $pid = fork();
             if (!defined $pid) {
                 close $reader; close $writer;
+                $testing_index++;
+                $candidate_node = "$name · 启动失败";
+                log_msg('WARN', "cannot start benchmark worker for '$name': $!");
+                write_status('switching', 'WARN', "ClashX latency benchmark $testing_index/$testing_total")
+                    unless $delay_self_test;
                 next;
             }
             if ($pid == 0) {
@@ -528,9 +584,15 @@ sub parallel_delay_tests {
             my $value = <$reader>;
             close $reader;
             chomp $value if defined $value;
-            push @working, [0 + $value, $name] if defined($value) && $value =~ /^\d+$/;
+            push @working, [0 + $value, $name]
+                if defined($value) && $value =~ /^\d+$/ && $value > 0;
+            $testing_index++;
+            $candidate_node = defined($value) && $value =~ /^\d+$/
+                ? "$name · ${value} ms"
+                : "$name · 失败";
+            write_status('switching', 'WARN', "ClashX latency benchmark $testing_index/$testing_total")
+                unless $delay_self_test;
         }
-        $testing_index += scalar(@batch);
     }
     return @working;
 }
@@ -593,6 +655,27 @@ sub run_internal_self_test {
     die "self-test failed: candidate rotation lost entries\n" unless @ranked == 4 && keys(%seen) == 4;
     my $message = diagnosis_message({ classification => 'openai_unreachable', secondarySuccesses => 1, secondaryTotal => 2 });
     die "self-test failed: diagnosis text\n" unless $message =~ /OpenAI|Codex/i;
+    my @measured = sort_measured_candidates([420, 'slow'], [78, 'fast'], [0, 'timeout']);
+    die "self-test failed: ClashX benchmark did not prefer the lowest live latency\n"
+        unless @measured == 2
+            && $measured[0]->[1] eq 'fast' && $measured[0]->[0] == 78
+            && $measured[1]->[1] eq 'slow' && $measured[1]->[0] == 420;
+    my @tied = sort_measured_candidates([120, 'aaa_new'], [120, 'stable']);
+    die "self-test failed: equal latency did not use reliability as a tie-breaker\n"
+        unless @tied == 2 && $tied[0]->[1] eq 'stable';
+    die "self-test failed: benchmark concurrency limit\n"
+        unless benchmark_parallel_limit(44) == 44
+            && benchmark_parallel_limit(120) == 64;
+    my $selected_after_timeout = confirmed_selected_node(
+        'fast', sub { return 'fast'; }
+    );
+    die "self-test failed: ambiguous PUT was not resolved from controller state\n"
+        unless defined($selected_after_timeout) && $selected_after_timeout eq 'fast';
+    my $wrong_selection = confirmed_selected_node(
+        'fast', sub { return 'slow'; }
+    );
+    die "self-test failed: mismatched selector state was accepted\n"
+        if defined $wrong_selection;
     print "guardian_self_test_ok=1 ranked=" . join(',', @ranked) . "\n";
     exit 0;
 }
@@ -606,14 +689,15 @@ sub run_delay_self_test {
         if $@ || ref($data) ne 'HASH' || ref($data->{all}) ne 'ARRAY';
     my $current = $data->{now} // '';
     my @candidates = grep { defined && length && $_ ne $current && $_ !~ $exclude_re } @{$data->{all}};
-    @candidates = ranked_candidates(@candidates);
-    splice(@candidates, $max_candidates) if @candidates > $max_candidates;
     my $started = time;
-    my @working = parallel_delay_tests(@candidates);
+    my $parallel_limit = benchmark_parallel_limit(scalar(@candidates));
+    my @working = parallel_delay_tests($parallel_limit, @candidates);
+    @working = sort_measured_candidates(@working);
     my $elapsed = time - $started;
     die "delay self-test failed: no candidate answered\n" unless @working;
-    print sprintf("delay_self_test_ok=1 tested=%d reachable=%d elapsed=%.2fs parallel=%d\n",
-        scalar(@candidates), scalar(@working), $elapsed, $max_parallel);
+    print sprintf("delay_self_test_ok=1 source=clashx-ui tested=%d reachable=%d best=%s best_delay=%dms elapsed=%.2fs parallel=%d\n",
+        scalar(@candidates), scalar(@working), $working[0]->[1], $working[0]->[0],
+        $elapsed, $parallel_limit);
     exit 0;
 }
 

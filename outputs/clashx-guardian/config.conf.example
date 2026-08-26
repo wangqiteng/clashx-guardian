@@ -26,7 +26,8 @@ PRIMARY_URLS=https://chatgpt.com/backend-api/codex
 SECONDARY_URLS=https://www.gstatic.com/generate_204,https://www.cloudflare.com/cdn-cgi/trace
 REQUIRED_SUCCESSES=1
 
-# 节点测速也走 ChatGPT 域名，让排序更贴近 Codex 的实际线路质量。
+# 使用与 ClashX“延迟测速”菜单相同的逐节点接口；默认最多同时测试 64 个节点。
+# 测速目标使用 ChatGPT 域名，让结果更贴近 Codex 线路；结果严格按实时延迟排序。
 DELAY_TEST_URL=https://chatgpt.com/
 
 # 每 5 秒检查一次；连续失败 20 秒才切换；两次切换至少间隔 120 秒。
@@ -39,11 +40,11 @@ FAILED_RETRY_COOLDOWN=30
 CONFIRMATION_DELAY=3
 PROBE_TIMEOUT=6
 
-# 最多测速 8 个候选，每批并行测 3 个，最多实际尝试 3 个。
+# 当前常见订阅可在一个批次内完成；超大策略组会按 64 个一批，避免瞬间创建过多进程。
 DELAY_TIMEOUT_MS=2500
-MAX_CANDIDATES=8
+MAX_BENCHMARK_CONCURRENCY=64
+# 最多只对最低延迟的 3 个节点做切换与完整连通性复检。
 MAX_SWITCH_ATTEMPTS=3
-MAX_PARALLEL_TESTS=3
 # 两个可测速节点都无法完成 Codex/外网验证时，先按公共故障处理，避免盲目切换。
 COMMON_FAILURE_LIMIT=2
 POST_SWITCH_WAIT=2

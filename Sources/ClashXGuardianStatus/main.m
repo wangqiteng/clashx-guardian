@@ -64,6 +64,19 @@ static NSString *AppearanceLabel(GuardianAppearance value) {
     }
 }
 
+static NSString *SummaryText(NSDictionary *status, BOOL isRunning, GuardianAppearance appearance) {
+    if (!isRunning) return @"自动保护：已暂停（重新打开本应用会自动开启）";
+    NSInteger testingIndex = [status[@"testingIndex"] integerValue];
+    NSInteger testingTotal = [status[@"testingTotal"] integerValue];
+    NSString *candidate = [status[@"candidateNode"] isKindOfClass:NSString.class] ? status[@"candidateNode"] : @"";
+    if (testingTotal > 0) {
+        NSString *progress = [NSString stringWithFormat:@"自动保护：已开启 · 正在测试 %ld/%ld",
+                              (long)testingIndex, (long)testingTotal];
+        return candidate.length ? [progress stringByAppendingFormat:@" · %@", candidate] : progress;
+    }
+    return [NSString stringWithFormat:@"自动保护：已开启 · %@", AppearanceLabel(appearance)];
+}
+
 static NSString *AppearanceSymbol(GuardianAppearance value) {
     switch (value) {
         case GuardianAppearanceHealthy: return @"checkmark.shield.fill";
@@ -182,12 +195,8 @@ static NSString *AppearanceSymbol(GuardianAppearance value) {
     GuardianAppearance appearance = [self appearanceForStatus:status];
     NSString *label = AppearanceLabel(appearance);
     [self updateButton:appearance tooltip:[NSString stringWithFormat:@"ClashX Guardian：%@", label]];
-    NSInteger testingIndex = [status[@"testingIndex"] integerValue];
-    NSInteger testingTotal = [status[@"testingTotal"] integerValue];
     BOOL isRunning = [self guardianProcessIsAlive:status] && appearance != GuardianAppearanceStopped;
-    self.summaryItem.title = !isRunning ? @"自动保护：已暂停（重新打开本应用会自动开启）"
-        : testingTotal > 0 ? [NSString stringWithFormat:@"自动保护：已开启 · 正在测试 %ld/%ld", (long)testingIndex, (long)testingTotal]
-        : [NSString stringWithFormat:@"自动保护：已开启 · %@", label];
+    self.summaryItem.title = SummaryText(status, isRunning, appearance);
     NSString *ssid = [status[@"ssid"] length] ? status[@"ssid"] : @"—";
     NSString *node = [status[@"currentNode"] length] ? status[@"currentNode"] : @"—";
     self.ssidItem.title = [NSString stringWithFormat:@"Wi-Fi：%@", ssid];
@@ -404,8 +413,14 @@ static int RunSelfTest(NSString *path) {
     NSDictionary *status = ReadStatus([NSURL fileURLWithPath:path], &error);
     if (!status) { fprintf(stderr, "self-test failed: %s\n", error.localizedDescription.UTF8String); return 1; }
     GuardianAppearance appearance = BaseAppearance(status[@"state"], status[@"level"]);
+    NSString *summary = SummaryText(status, YES, appearance);
+    if ([status[@"state"] isEqualToString:@"switching"] &&
+        ![summary containsString:@"🇯🇵 日本 Y02 · 88 ms"]) {
+        fprintf(stderr, "self-test failed: switching summary omitted measured candidate\n");
+        return 1;
+    }
     printf("self_test_ok=1 state=%s appearance=%ld\n", [status[@"state"] UTF8String], (long)appearance);
-    return appearance == GuardianAppearanceHealthy ? 0 : 1;
+    return appearance == GuardianAppearanceHealthy || appearance == GuardianAppearanceWorking ? 0 : 1;
 }
 
 int main(int argc, const char *argv[]) {
