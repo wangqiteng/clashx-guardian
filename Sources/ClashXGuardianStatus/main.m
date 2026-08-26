@@ -81,7 +81,6 @@ static NSString *SummaryText(NSDictionary *status, BOOL isRunning, GuardianAppea
 }
 
 static NSImage *GuardianStatusImage(GuardianAppearance appearance) {
-    const NSInteger scale = 2;
     NSSize size = NSMakeSize(18, 18);
     NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc]
         initWithBitmapDataPlanes:NULL pixelsWide:36 pixelsHigh:36 bitsPerSample:8 samplesPerPixel:4
@@ -90,7 +89,6 @@ static NSImage *GuardianStatusImage(GuardianAppearance appearance) {
     NSGraphicsContext *context = [NSGraphicsContext graphicsContextWithBitmapImageRep:bitmap];
     [NSGraphicsContext saveGraphicsState];
     [NSGraphicsContext setCurrentContext:context];
-    CGContextScaleCTM(context.CGContext, scale, scale);
     CGContextSetShouldAntialias(context.CGContext, true);
     CGContextClearRect(context.CGContext, CGRectMake(0, 0, 18, 18));
 
@@ -106,19 +104,6 @@ static NSImage *GuardianStatusImage(GuardianAppearance appearance) {
     [AppearanceColor(appearance) setFill];
     [shield fill];
 
-    [NSColor.whiteColor setStroke];
-    [NSColor.whiteColor setFill];
-    for (NSNumber *radiusValue in @[@2.65, @4.65]) {
-        NSBezierPath *wave = [NSBezierPath bezierPath];
-        wave.lineWidth = 1.35;
-        wave.lineCapStyle = NSLineCapStyleRound;
-        [wave appendBezierPathWithArcWithCenter:NSMakePoint(9, 5.0)
-                                         radius:radiusValue.doubleValue
-                                     startAngle:43
-                                       endAngle:137];
-        [wave stroke];
-    }
-    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(8.15, 4.0, 1.7, 1.7)] fill];
     [context flushGraphics];
     [NSGraphicsContext restoreGraphicsState];
 
@@ -261,7 +246,7 @@ static int WriteApplicationIcon(NSString *path) {
 }
 
 - (void)configureMenu {
-    self.statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
+    self.statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSSquareStatusItemLength];
     self.menu = [[NSMenu alloc] initWithTitle:@"ClashX Guardian"];
     self.menu.delegate = self;
     self.summaryItem = [self infoItem:@"正在读取状态…"];
@@ -535,7 +520,7 @@ static int RunSelfTest(NSString *path) {
         return 1;
     }
     NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithData:statusImage.TIFFRepresentation];
-    NSInteger coloredPixels = 0, whitePixels = 0;
+    NSInteger coloredPixels = 0, whitePixels = 0, mirroredAlphaDifference = 0;
     for (NSInteger y = 0; y < bitmap.pixelsHigh; y++) {
         for (NSInteger x = 0; x < bitmap.pixelsWide; x++) {
             NSColor *pixel = [[bitmap colorAtX:x y:y] colorUsingColorSpace:NSColorSpace.deviceRGBColorSpace];
@@ -544,10 +529,19 @@ static int RunSelfTest(NSString *path) {
             [pixel getHue:&hue saturation:&saturation brightness:&brightness alpha:&alpha];
             if (saturation > 0.35 && brightness > 0.25) coloredPixels++;
             if (saturation < 0.12 && brightness > 0.82) whitePixels++;
+
+            NSInteger mirrorX = bitmap.pixelsWide - 1 - x;
+            NSColor *mirror = [[bitmap colorAtX:mirrorX y:y]
+                colorUsingColorSpace:NSColorSpace.deviceRGBColorSpace];
+            if (!mirror || fabs(pixel.alphaComponent - mirror.alphaComponent) > 0.08) {
+                mirroredAlphaDifference++;
+            }
         }
     }
-    if (coloredPixels < 20 || whitePixels < 4) {
-        fprintf(stderr, "self-test failed: menu icon must combine a colored shield with a white network glyph\n");
+    if (coloredPixels < 20 || whitePixels > 3 || mirroredAlphaDifference > 8) {
+        fprintf(stderr, "self-test failed: menu icon must be a complete, centered, symmetric colored shield "
+                        "(colored=%ld white=%ld mirror-diff=%ld)\n",
+                (long)coloredPixels, (long)whitePixels, (long)mirroredAlphaDifference);
         return 1;
     }
     NSString *summary = SummaryText(status, YES, appearance);
