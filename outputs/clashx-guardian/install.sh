@@ -12,6 +12,9 @@ status_source="$source_dir/ClashX Guardian Status.app"
 applications_dir="$HOME/Applications"
 status_app="$applications_dir/ClashX Guardian Status.app"
 status_binary="$status_app/Contents/MacOS/ClashXGuardianStatus"
+logs_dir="$HOME/Library/Logs"
+guardian_log="$logs_dir/ClashXGuardian.log"
+diagnostic_log="$logs_dir/ClashXGuardianDiagnostic.log"
 
 bootstrap_with_retry() {
   local domain=$1
@@ -27,7 +30,9 @@ bootstrap_with_retry() {
   return 1
 }
 
-mkdir -p "$install_dir" "$launch_agents_dir"
+mkdir -p "$install_dir" "$launch_agents_dir" "$logs_dir"
+touch "$guardian_log" "$diagnostic_log"
+chmod 0600 "$guardian_log" "$diagnostic_log"
 install -m 0755 "$source_dir/clashx-guardian.pl" "$install_dir/clashx-guardian.pl"
 
 if [[ ! -f "$install_dir/config.conf" ]]; then
@@ -51,6 +56,9 @@ grep -q '^COMMON_FAILURE_LIMIT=' "$install_dir/config.conf" || print 'COMMON_FAI
 escaped_program=${install_dir//&/&amp;}
 escaped_program=${escaped_program//</&lt;}
 escaped_program=${escaped_program//>/&gt;}
+escaped_diagnostic_log=${diagnostic_log//&/&amp;}
+escaped_diagnostic_log=${escaped_diagnostic_log//</&lt;}
+escaped_diagnostic_log=${escaped_diagnostic_log//>/&gt;}
 
 cat > "$plist_path" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -76,9 +84,9 @@ cat > "$plist_path" <<PLIST
   <key>ThrottleInterval</key>
   <integer>30</integer>
   <key>StandardOutPath</key>
-  <string>/dev/null</string>
+  <string>$escaped_diagnostic_log</string>
   <key>StandardErrorPath</key>
-  <string>/dev/null</string>
+  <string>$escaped_diagnostic_log</string>
 </dict>
 </plist>
 PLIST
@@ -87,7 +95,6 @@ chmod 0600 "$plist_path"
 plutil -lint "$plist_path"
 launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
 bootstrap_with_retry "gui/$(id -u)" "$plist_path"
-launchctl kickstart -k "gui/$(id -u)/$label"
 
 if [[ -d "$status_source" ]]; then
   mkdir -p "$applications_dir"
@@ -108,8 +115,8 @@ if [[ -d "$status_source" ]]; then
   <key>ProgramArguments</key><array><string>$escaped_status_binary</string></array>
   <key>RunAtLoad</key><true/>
   <key>ProcessType</key><string>Interactive</string>
-  <key>StandardOutPath</key><string>/dev/null</string>
-  <key>StandardErrorPath</key><string>/dev/null</string>
+  <key>StandardOutPath</key><string>$escaped_diagnostic_log</string>
+  <key>StandardErrorPath</key><string>$escaped_diagnostic_log</string>
 </dict></plist>
 STATUS_PLIST
   chmod 0600 "$status_plist_path"
@@ -121,5 +128,6 @@ fi
 print "安装完成。请先编辑配置，然后执行："
 print "  open -e '$install_dir/config.conf'"
 print "  launchctl kickstart -k 'gui/$(id -u)/$label'"
-print "日志：$HOME/Library/Logs/ClashXGuardian.log"
+print "运行日志：$guardian_log"
+print "启动诊断：$diagnostic_log"
 print "菜单栏：彩色网络状态图标"

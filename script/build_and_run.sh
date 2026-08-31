@@ -23,9 +23,14 @@ trap 'rm -rf "$STAGE_ROOT"' EXIT
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 mkdir -p "$BUILD_DIR" "$STAGE_MACOS" "$STAGE_RESOURCES" "$STAGE_ICONSET"
-clang -fobjc-arc -Wall -Wextra -Werror \
+clang -fobjc-arc -Wall -Wextra -Werror -I"$ROOT_DIR/Sources" \
   -framework Cocoa -framework UserNotifications \
-  "$ROOT_DIR/Sources/ClashXGuardianStatus/main.m" -o "$STAGE_BINARY"
+  "$ROOT_DIR/Sources/ClashXGuardianStatus/main.m" \
+  "$ROOT_DIR/Sources/GuardianStartPolicy.m" -o "$STAGE_BINARY"
+clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
+  "$ROOT_DIR/Tests/GuardianStartPolicyTests.m" \
+  "$ROOT_DIR/Sources/GuardianStartPolicy.m" -o "$STAGE_ROOT/GuardianStartPolicyTests"
+"$STAGE_ROOT/GuardianStartPolicyTests"
 "$STAGE_BINARY" --self-test "$ROOT_DIR/Tests/fixtures/healthy-status.json"
 "$STAGE_BINARY" --self-test "$ROOT_DIR/Tests/fixtures/switching-status.json"
 install -m 0755 "$STAGE_BINARY" "$BUILD_DIR/$APP_NAME"
@@ -58,8 +63,8 @@ cat >"$STAGE_PLIST" <<PLIST
   <key>CFBundleDisplayName</key><string>$DISPLAY_NAME</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
-  <key>CFBundleShortVersionString</key><string>2.2.1</string>
-  <key>CFBundleVersion</key><string>5</string>
+  <key>CFBundleShortVersionString</key><string>2.2.2</string>
+  <key>CFBundleVersion</key><string>6</string>
   <key>LSMinimumSystemVersion</key><string>$MIN_SYSTEM_VERSION</string>
   <key>LSUIElement</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
@@ -86,7 +91,9 @@ codesign --verify --deep --strict "$STAGE_BUNDLE"
 rm -rf "$APP_BUNDLE"
 /usr/bin/ditto --norsrc --noextattr "$STAGE_BUNDLE" "$APP_BUNDLE"
 xattr -cr "$APP_BUNDLE"
-codesign --verify --deep --strict "$APP_BUNDLE"
+/usr/bin/cmp "$STAGE_BINARY" "$APP_BINARY"
+/usr/bin/cmp "$STAGE_PLIST" "$INFO_PLIST"
+/usr/bin/cmp "$STAGE_RESOURCES/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
 open_app() { /usr/bin/open -n "$APP_BUNDLE"; }
 case "$MODE" in

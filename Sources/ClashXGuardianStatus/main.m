@@ -3,8 +3,26 @@
 #import <os/log.h>
 #import <errno.h>
 #import <signal.h>
+#import "GuardianStartPolicy.h"
 
 static NSString *const GuardianBundleID = @"com.local.ClashXGuardianStatus";
+
+static void PrepareDiagnosticLog(NSURL *logURL) {
+    NSFileManager *manager = NSFileManager.defaultManager;
+    [manager createDirectoryAtURL:logURL.URLByDeletingLastPathComponent
+      withIntermediateDirectories:YES attributes:nil error:nil];
+    NSNumber *size = [manager attributesOfItemAtPath:logURL.path error:nil][NSFileSize];
+    if (GuardianDiagnosticLogNeedsRotation(size.unsignedLongLongValue)) {
+        // 只保留一份旧诊断，避免长期运行无限占用磁盘。
+        NSURL *previousURL = [NSURL fileURLWithPath:[logURL.path stringByAppendingString:@".previous"]];
+        [manager removeItemAtURL:previousURL error:nil];
+        [manager moveItemAtURL:logURL toURL:previousURL error:nil];
+    }
+    if (![manager fileExistsAtPath:logURL.path]) {
+        [manager createFileAtPath:logURL.path contents:NSData.data
+                       attributes:@{NSFilePosixPermissions: @0600}];
+    }
+}
 
 typedef NS_ENUM(NSInteger, GuardianAppearance) {
     GuardianAppearanceHealthy, GuardianAppearanceWarning, GuardianAppearanceWorking,
@@ -208,6 +226,9 @@ static int WriteApplicationIcon(NSString *path) {
 @property(nonatomic, strong) NSArray<NSMenuItem *> *eventItems;
 @property(nonatomic, strong) NSMenuItem *startItem, *stopItem, *restartItem;
 @property(nonatomic) BOOL guardianRunning;
+@property(nonatomic) BOOL guardianStartInProgress;
+@property(nonatomic, copy) NSString *guardianOperationLabel;
+@property(nonatomic, strong) NSURL *diagnosticLogURL;
 @end
 
 @implementation GuardianAppDelegate
@@ -221,6 +242,10 @@ static int WriteApplicationIcon(NSString *path) {
     self.triggerURL = [self.baseDirectory URLByAppendingPathComponent:@"check-now"];
     self.configURL = [self.baseDirectory URLByAppendingPathComponent:@"config.conf"];
     self.logURL = [home URLByAppendingPathComponent:@"Library/Logs/ClashXGuardian.log"];
+    self.diagnosticLogURL = [home URLByAppendingPathComponent:@"Library/Logs/ClashXGuardianDiagnostic.log"];
+    PrepareDiagnosticLog(self.diagnosticLogURL);
+    freopen(self.diagnosticLogURL.fileSystemRepresentation, "a", stderr);
+    setvbuf(stderr, NULL, _IOLBF, 0);
     [self configureMenu];
     [self refreshStatus];
     [self ensureGuardianRunning:NO];
@@ -270,6 +295,7 @@ static int WriteApplicationIcon(NSString *path) {
     [self.menu addItem:NSMenuItem.separatorItem];
     [self.menu addItem:[self actionItem:@"打开配置" selector:@selector(openConfig:) key:@""]];
     [self.menu addItem:[self actionItem:@"打开日志" selector:@selector(openLog:) key:@""]];
+    [self.menu addItem:[self actionItem:@"打开诊断日志" selector:@selector(openDiagnosticLog:) key:@""]];
     [self.menu addItem:NSMenuItem.separatorItem];
     self.eventsHeaderItem = [self infoItem:@"最近事件"];
     [self.menu addItem:self.eventsHeaderItem];
@@ -305,7 +331,8 @@ static int WriteApplicationIcon(NSString *path) {
     NSString *label = AppearanceLabel(appearance);
     [self updateButton:appearance tooltip:[NSString stringWithFormat:@"ClashX Guardian：%@", label]];
     BOOL isRunning = [self guardianProcessIsAlive:status] && appearance != GuardianAppearanceStopped;
-    self.summaryItem.title = SummaryText(status, isRunning, appearance);
+    self.summaryItem.title = GuardianVisibleSummary(self.guardianOperationLabel,
+                                                    SummaryText(status, isRunning, appearance));
     NSString *ssid = [status[@"ssid"] length] ? status[@"ssid"] : @"—";
     NSString *node = [status[@"currentNode"] length] ? status[@"currentNode"] : @"—";
     self.ssidItem.title = [NSString stringWithFormat:@"Wi-Fi：%@", ssid];
@@ -358,7 +385,8 @@ static int WriteApplicationIcon(NSString *path) {
 
 - (void)renderUnavailable:(NSError *)error {
     [self updateButton:GuardianAppearanceStopped tooltip:@"ClashX Guardian 状态不可用"];
-    self.summaryItem.title = @"自动保护：已暂停（重新打开本应用会自动开启）";
+    self.summaryItem.title = GuardianVisibleSummary(self.guardianOperationLabel,
+                                                    @"自动保护：已暂停（重新打开本应用会自动开启）");
     self.ssidItem.title = @"Wi-Fi：—"; self.nodeItem.title = @"节点：—"; self.diagnosisItem.title = @"线路：—";
     self.checkedItem.title = @"上次检测：—"; self.thresholdItem.title = @"切换阈值：—";
     self.attemptedItem.title = @"上次尝试：—"; self.switchedItem.title = @"成功切换：—";
@@ -417,12 +445,16 @@ static int WriteApplicationIcon(NSString *path) {
 
 - (void)restartGuardian:(id)sender {
     (void)sender;
+    if (self.guardianStartInProgress) return;
     if (!self.guardianRunning) { [self ensureGuardianRunning:YES]; return; }
-    self.summaryItem.title = @"自动保护：正在重启…";
+    [self beginGuardianOperation:@"正在重启…"];
     [self runLaunchctl:@[@"kickstart", @"-k", [self guardianServiceTarget]] completion:^(BOOL success, NSString *message) {
-        if (!success) [self showAlert:@"无法重启 Guardian" message:message];
-        else os_log_info(OS_LOG_DEFAULT, "guardian restart requested");
-        [self refreshStatus];
+        if (!success) {
+            [self finishGuardianOperation:NO showErrors:YES message:message];
+            return;
+        }
+        os_log_info(OS_LOG_DEFAULT, "guardian restart requested");
+        [self pollGuardianUntil:NSDate.date.timeIntervalSince1970 + 120 showErrors:YES lastMessage:message];
     }];
 }
 
@@ -430,6 +462,7 @@ static int WriteApplicationIcon(NSString *path) {
 
 - (void)stopGuardian:(id)sender {
     (void)sender;
+    if (self.guardianStartInProgress) return;
     self.summaryItem.title = @"自动保护：正在暂停…";
     [self runLaunchctl:@[@"bootout", [self guardianServiceTarget]] completion:^(BOOL success, NSString *message) {
         if (!success) [self showAlert:@"无法停止 Guardian" message:message];
@@ -441,21 +474,83 @@ static int WriteApplicationIcon(NSString *path) {
 }
 
 - (void)ensureGuardianRunning:(BOOL)showErrors {
-    if (self.guardianRunning) return;
-    self.summaryItem.title = @"自动保护：正在开启…";
+    if (self.guardianRunning || self.guardianStartInProgress) return;
+    [self beginGuardianOperation:@"正在开启…（最长等待 120 秒）"];
     NSString *domain = [NSString stringWithFormat:@"gui/%d", getuid()];
     NSString *plist = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/LaunchAgents/com.local.clashx-guardian.plist"];
     [self runLaunchctl:@[@"bootstrap", domain, plist] completion:^(BOOL success, NSString *message) {
         if (success) {
-            os_log_info(OS_LOG_DEFAULT, "guardian automatically started");
-            [self refreshStatus];
+            [self pollGuardianUntil:NSDate.date.timeIntervalSince1970 + 120 showErrors:showErrors lastMessage:message];
             return;
         }
-        [self runLaunchctl:@[@"kickstart", @"-k", [self guardianServiceTarget]] completion:^(BOOL kicked, NSString *kickMessage) {
-            if (!kicked && showErrors) [self showAlert:@"无法启动 Guardian" message:kickMessage.length ? kickMessage : message];
-            [self refreshStatus];
+        [self runLaunchctl:@[@"print", [self guardianServiceTarget]] completion:^(BOOL loaded, NSString *printOutput) {
+            GuardianServiceState state = GuardianServiceStateFromLaunchctlOutput(printOutput);
+            GuardianStartAction action = GuardianStartActionForService(loaded, state);
+            if (action == GuardianStartActionComplete) {
+                [self finishGuardianOperation:YES showErrors:showErrors message:printOutput];
+            } else if (action == GuardianStartActionWait) {
+                [self pollGuardianUntil:NSDate.date.timeIntervalSince1970 + 120
+                             showErrors:showErrors lastMessage:printOutput];
+            } else if (action == GuardianStartActionKickstart) {
+                [self runLaunchctl:GuardianNonDestructiveKickstartArguments([self guardianServiceTarget])
+                        completion:^(BOOL kicked, NSString *kickMessage) {
+                    NSString *detail = kickMessage.length ? kickMessage : message;
+                    if (!kicked) {
+                        [self finishGuardianOperation:NO showErrors:showErrors message:detail];
+                        return;
+                    }
+                    [self pollGuardianUntil:NSDate.date.timeIntervalSince1970 + 120
+                                 showErrors:showErrors lastMessage:detail];
+                }];
+            } else {
+                NSString *detail = message.length ? message : printOutput;
+                [self finishGuardianOperation:NO showErrors:showErrors message:detail];
+            }
         }];
     }];
+}
+
+- (void)beginGuardianOperation:(NSString *)label {
+    self.guardianStartInProgress = YES;
+    self.guardianOperationLabel = label;
+    self.summaryItem.title = GuardianVisibleSummary(label, @"");
+    [self updateControlItems];
+}
+
+- (void)pollGuardianUntil:(NSTimeInterval)deadline showErrors:(BOOL)showErrors lastMessage:(NSString *)lastMessage {
+    [self runLaunchctl:@[@"print", [self guardianServiceTarget]] completion:^(BOOL loaded, NSString *output) {
+        GuardianServiceState state = GuardianServiceStateFromLaunchctlOutput(output);
+        if (loaded && state == GuardianServiceStateRunning) {
+            [self finishGuardianOperation:YES showErrors:showErrors message:output];
+            return;
+        }
+        NSString *detail = output.length ? output : lastMessage;
+        if (NSDate.date.timeIntervalSince1970 >= deadline) {
+            NSString *timeout = detail.length
+                ? [NSString stringWithFormat:@"等待 120 秒后仍未启动。\n\n%@", detail]
+                : @"等待 120 秒后仍未启动，请查看诊断日志。";
+            [self finishGuardianOperation:NO showErrors:showErrors message:timeout];
+            return;
+        }
+        self.summaryItem.title = GuardianVisibleSummary(self.guardianOperationLabel ?: @"正在启动…", @"");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            [self pollGuardianUntil:deadline showErrors:showErrors lastMessage:detail];
+        });
+    }];
+}
+
+- (void)finishGuardianOperation:(BOOL)success showErrors:(BOOL)showErrors message:(NSString *)message {
+    self.guardianStartInProgress = NO;
+    self.guardianOperationLabel = nil;
+    if (success) {
+        self.guardianRunning = YES;
+        os_log_info(OS_LOG_DEFAULT, "guardian launch completed");
+    } else {
+        os_log_error(OS_LOG_DEFAULT, "guardian launch failed: %{public}@", message);
+        if (showErrors) [self showAlert:@"无法启动 Guardian" message:message.length ? message : @"未知错误，请查看诊断日志。"];
+    }
+    [self refreshStatus];
+    [self updateControlItems];
 }
 
 - (NSString *)guardianServiceTarget { return [NSString stringWithFormat:@"gui/%d/com.local.clashx-guardian", getuid()]; }
@@ -468,6 +563,13 @@ static int WriteApplicationIcon(NSString *path) {
 }
 
 - (void)updateControlItems {
+    self.startItem.title = self.guardianStartInProgress ? @"正在启动，请稍候…" : @"开启自动保护";
+    if (self.guardianStartInProgress) {
+        self.startItem.enabled = NO;
+        self.stopItem.enabled = NO;
+        self.restartItem.enabled = NO;
+        return;
+    }
     self.startItem.enabled = !self.guardianRunning;
     self.stopItem.enabled = self.guardianRunning;
     self.restartItem.enabled = self.guardianRunning;
@@ -479,6 +581,7 @@ static int WriteApplicationIcon(NSString *path) {
         NSPipe *pipe = [NSPipe pipe];
         task.executableURL = [NSURL fileURLWithPath:@"/bin/launchctl"];
         task.arguments = arguments;
+        task.standardOutput = pipe;
         task.standardError = pipe;
         NSError *error = nil;
         BOOL launched = [task launchAndReturnError:&error];
@@ -487,12 +590,24 @@ static int WriteApplicationIcon(NSString *path) {
         NSString *output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
         BOOL success = launched && task.terminationStatus == 0;
         NSString *message = error.localizedDescription ?: [output stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        NSString *command = [arguments componentsJoinedByString:@" "];
+        fprintf(stderr, "%s launchctl %s exit=%d%s%s\n",
+                NSDate.date.description.UTF8String, command.UTF8String,
+                launched ? task.terminationStatus : -1,
+                message.length ? ": " : "", message.UTF8String ?: "");
         dispatch_async(dispatch_get_main_queue(), ^{ completion(success, message); });
     });
 }
 
 - (void)openConfig:(id)sender { (void)sender; [NSWorkspace.sharedWorkspace openURL:self.configURL]; }
 - (void)openLog:(id)sender { (void)sender; [NSWorkspace.sharedWorkspace openURL:self.logURL]; }
+- (void)openDiagnosticLog:(id)sender {
+    (void)sender;
+    if (![NSFileManager.defaultManager fileExistsAtPath:self.diagnosticLogURL.path]) {
+        [NSFileManager.defaultManager createFileAtPath:self.diagnosticLogURL.path contents:NSData.data attributes:nil];
+    }
+    [NSWorkspace.sharedWorkspace openURL:self.diagnosticLogURL];
+}
 - (void)quitStatusApp:(id)sender { (void)sender; [NSApp terminate:nil]; }
 
 - (NSString *)relativeTime:(NSTimeInterval)timestamp {

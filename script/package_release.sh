@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${1:-2.2.1}"
+VERSION="${1:-2.2.2}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_DIR="$ROOT_DIR/outputs/clashx-guardian"
 APP_NAME="ClashX Guardian Status.app"
@@ -19,6 +19,10 @@ rm -rf "$RELEASE_DIR/$APP_NAME"
 /bin/cp -R "$ROOT_DIR/dist/$APP_NAME" "$RELEASE_DIR/$APP_NAME"
 mkdir -p "$RELEASE_DIR/Source"
 install -m 0644 "$ROOT_DIR/Sources/ClashXGuardianStatus/main.m" "$RELEASE_DIR/Source/ClashXGuardianStatus.m"
+install -m 0644 "$ROOT_DIR/Sources/GuardianStartPolicy.h" "$RELEASE_DIR/Source/GuardianStartPolicy.h"
+install -m 0644 "$ROOT_DIR/Sources/GuardianStartPolicy.m" "$RELEASE_DIR/Source/GuardianStartPolicy.m"
+mkdir -p "$RELEASE_DIR/Tests"
+install -m 0644 "$ROOT_DIR/Tests/GuardianStartPolicyTests.m" "$RELEASE_DIR/Tests/GuardianStartPolicyTests.m"
 chmod 0755 "$RELEASE_DIR/clashx-guardian.pl" "$RELEASE_DIR/install.sh" "$RELEASE_DIR/uninstall.sh"
 xattr -cr "$RELEASE_DIR"
 codesign --force --deep --sign - "$RELEASE_DIR/$APP_NAME" >/dev/null

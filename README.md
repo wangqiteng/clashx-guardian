@@ -10,11 +10,15 @@ ClashX Guardian 是一个面向 macOS + ClashX Pro 的轻量网络守护工具�
 - 严格按本次实时延迟从低到高尝试；日常健康状态不会触发全量测速。
 - 区分切换尝试和成功切换；失败后快速重试，成功后使用较长冷却。
 - 菜单栏使用居中的彩色对称盾牌表示线路状态；启动台图标保留“盾牌 + Wi-Fi”品牌图形。菜单可查看线路原因、切换进度、最近事件，并提供开启、暂停和重启。
+- 菜单栏启动 Guardian 时识别 launchd 的启动中状态，只发出一次非破坏性启动请求并等待最多 120 秒，避免反复点击导致进程一直被重启。
+- Guardian 与菜单栏启动错误写入持久诊断日志，便于定位偶发的 launchd 启动失败。
 
 ## 项目结构
 
 - `outputs/clashx-guardian/clashx-guardian.pl`：后台守护进程。
 - `Sources/ClashXGuardianStatus/main.m`：原生 AppKit 菜单栏应用。
+- `Sources/GuardianStartPolicy.*`：launchd 状态识别与安全启动策略。
+- `Tests/GuardianStartPolicyTests.m`：启动策略回归测试。
 - `script/build_and_run.sh`：构建、运行和验证入口。
 - `script/package_release.sh`：生成不含本机配置、密钥、日志和节点历史的分享包。
 - `outputs/clashx-guardian/README.md`：完整安装和配置说明。
