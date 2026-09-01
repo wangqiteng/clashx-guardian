@@ -33,12 +33,10 @@ my $failed_retry      = number_cfg('FAILED_RETRY_COOLDOWN', 30, 10, 600);
 my $confirmation_delay = number_cfg('CONFIRMATION_DELAY', 3, 0, 15);
 my $common_failure_limit = number_cfg('COMMON_FAILURE_LIMIT', 2, 1, 10);
 
-my @target_ssids = split_csv($cfg{TARGET_SSIDS} || 'Dbapp-guest,Dbappsecurity');
 my @primary_urls = split_csv($cfg{PRIMARY_URLS} ||
     'https://chatgpt.com/backend-api/codex');
 my @secondary_urls = split_csv($cfg{SECONDARY_URLS} ||
     'https://www.gstatic.com/generate_204,https://www.cloudflare.com/cdn-cgi/trace');
-die "TARGET_SSIDS cannot be empty\n" unless @target_ssids;
 die "PRIMARY_URLS cannot be empty\n" unless @primary_urls;
 die "SECONDARY_URLS cannot be empty\n" unless @secondary_urls;
 $required_success = scalar(@secondary_urls) if $required_success > @secondary_urls;
@@ -57,7 +55,6 @@ my $group              = $cfg{PROXY_GROUP} || 'Proxy';
 my $secret             = $cfg{CONTROLLER_SECRET} // '';
 $secret = clashx_saved_secret() if $secret =~ /^(?:auto)?$/i;
 my $require_sys_proxy  = bool_cfg('REQUIRE_SYSTEM_PROXY', 1);
-my $require_codex      = bool_cfg('REQUIRE_CODEX_RUNNING', 1);
 my $exclude_pattern    = $cfg{EXCLUDE_PATTERN} || '^(?:DIRECT|REJECT|PASS)$';
 my $exclude_re         = eval { qr/$exclude_pattern/i };
 die "Invalid EXCLUDE_PATTERN: $@\n" if $@;
@@ -110,48 +107,27 @@ log_msg('INFO', "started; Wi-Fi device=" . ($wifi_device || 'not found'));
 state_log('starting', 'INFO', 'ClashX Guardian is starting');
 
 while ($running) {
-    if (!$wifi_device) {
-        state_log('no_wifi_device', 'WARN', 'Wi-Fi hardware port not found; will retry');
-        interruptible_sleep($interval);
-        $wifi_device = find_wifi_device();
-        next;
-    }
+    $wifi_device ||= find_wifi_device();
+    my $ssid = $wifi_device ? current_ssid($wifi_device) : undef;
+    $active_ssid = defined($ssid) ? $ssid : '';
+    my $network_context = length($active_ssid) ? "on '$active_ssid'" : 'on the current network';
+    my $system_proxy_ready = !$require_sys_proxy || system_proxy_matches();
+    my $controller_ready = $system_proxy_ready ? controller_ok() : 0;
+    my $decision = monitoring_decision(
+        ssid => $ssid,
+        system_proxy => $system_proxy_ready, controller => $controller_ready);
 
-    my $ssid = current_ssid($wifi_device);
-    if (!defined $ssid) {
-        state_log('ssid_unavailable', 'WARN',
-            'cannot read current SSID; grant Location Services access to the launching app if macOS blocks it');
-        $fail_since = undef;
-        interruptible_sleep($interval);
-        next;
-    }
-    $active_ssid = $ssid;
-
-    if (!grep { lc($_) eq lc($ssid) } @target_ssids) {
-        state_log('inactive_ssid', 'INFO', "inactive on Wi-Fi '$ssid'");
-        $fail_since = undef;
-        interruptible_sleep($interval);
-        next;
-    }
-
-    if ($require_codex && !codex_running()) {
-        state_log('codex_off', 'INFO', "on '$ssid', but Codex is not running; probes are paused");
-        $fail_since = undef;
-        interruptible_sleep($interval);
-        next;
-    }
-
-    if ($require_sys_proxy && !system_proxy_matches()) {
+    if ($decision eq 'system_proxy_off') {
         state_log('system_proxy_off', 'INFO',
-            "on '$ssid', but the macOS system proxy is not enabled at the configured local port");
+            "$network_context, but the macOS system proxy is not enabled at the configured local port");
         $fail_since = undef;
         interruptible_sleep($interval);
         next;
     }
 
-    unless (controller_ok()) {
+    if ($decision eq 'controller_off') {
         state_log('controller_off', 'WARN',
-            "on '$ssid', but Clash controller is unavailable; automatic switching is impossible");
+            "$network_context, but Clash controller is unavailable; automatic switching is impossible");
         $fail_since = undef;
         interruptible_sleep($interval);
         next;
@@ -309,10 +285,11 @@ sub system_proxy_matches {
     return ($http_on || $https_on) && $host_ok && $port_ok;
 }
 
-sub codex_running {
-    my (undef, $status) = run_capture('/usr/bin/pgrep', '-if',
-        '(/Codex[.]app/|(^|[ /])codex( |$).*(app-server|resume|exec))');
-    return $status == 0;
+sub monitoring_decision {
+    my %state = @_;
+    return 'system_proxy_off' unless $state{system_proxy};
+    return 'controller_off' unless $state{controller};
+    return 'monitor';
 }
 
 sub controller_headers {
@@ -676,6 +653,22 @@ sub run_internal_self_test {
     );
     die "self-test failed: mismatched selector state was accepted\n"
         if defined $wrong_selection;
+    die "self-test failed: arbitrary networks must be monitored while enabled\n"
+        unless monitoring_decision(
+            ssid => 'Coffee-Shop-Guest', codex_running => 0,
+            system_proxy => 1, controller => 1) eq 'monitor';
+    die "self-test failed: a missing Wi-Fi name must not pause monitoring\n"
+        unless monitoring_decision(
+            ssid => undef, codex_running => 0,
+            system_proxy => 1, controller => 1) eq 'monitor';
+    die "self-test failed: switching requires the configured system proxy\n"
+        unless monitoring_decision(
+            ssid => 'any', codex_running => 1,
+            system_proxy => 0, controller => 1) eq 'system_proxy_off';
+    die "self-test failed: switching requires the Clash controller\n"
+        unless monitoring_decision(
+            ssid => 'any', codex_running => 1,
+            system_proxy => 1, controller => 0) eq 'controller_off';
     print "guardian_self_test_ok=1 ranked=" . join(',', @ranked) . "\n";
     exit 0;
 }

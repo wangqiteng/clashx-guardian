@@ -29,3 +29,15 @@ NSString *GuardianVisibleSummary(NSString *operationLabel, NSString *statusSumma
 BOOL GuardianDiagnosticLogNeedsRotation(unsigned long long size) {
     return size > 512 * 1024;
 }
+
+NSArray<NSString *> *GuardianStopArguments(NSString *target) {
+    return @[@"bootout", target];
+}
+
+BOOL GuardianShouldTerminateAfterStop(BOOL stopSucceeded) {
+    return stopSucceeded;
+}
+
+GuardianQuitAction GuardianQuitActionForService(BOOL loaded) {
+    return loaded ? GuardianQuitActionStopService : GuardianQuitActionTerminate;
+}

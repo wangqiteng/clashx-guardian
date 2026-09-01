@@ -1,6 +1,6 @@
 # ClashX Guardian
 
-一个低资源后台检查器和原生 macOS 菜单栏状态应用。居中的彩色对称盾牌用于快速识别网络守护状态。它只在连接到配置的 Wi-Fi、Clash 控制接口可用且系统代理已开启时进行检查。连续 20 秒无法通过本地 Clash 代理访问 Codex 后端时，它会使用与 ClashX“延迟测速”菜单相同的逐节点接口并发测试策略组节点，按本次实时延迟从低到高切换，并再次验证真实连通性。默认最多同时测速 64 个节点，超大策略组会自动分批。
+一个低资源后台检查器和原生 macOS 菜单栏状态应用。居中的彩色对称盾牌用于快速识别网络守护状态。自动保护开启后会在任意 Wi-Fi、热点或有线网络上持续检查，不依赖网络名称或 Codex 进程状态；Clash 控制接口可用且系统代理已开启时，连续 20 秒无法通过本地 Clash 代理访问 Codex 后端，它会使用与 ClashX“延迟测速”菜单相同的逐节点接口并发测试策略组节点，按本次实时延迟从低到高切换，并再次验证真实连通性。默认最多同时测速 64 个节点，超大策略组会自动分批。
 
 优化版会分别记录 Codex 主探针和公共外网探针的结果。多个可测速节点均无法完成真实连通性验证时，会判断为公共网络或目标站点异常并停止盲目切换。切换失败使用短重试间隔，只有成功切换才进入较长冷却。
 
@@ -31,7 +31,7 @@ chmod +x install.sh uninstall.sh clashx-guardian.pl
 open -e "$HOME/Library/Application Support/ClashXGuardian/config.conf"
 ```
 
-先将 `TARGET_SSIDS` 改成需要保护的 Wi-Fi，多个名称用英文逗号分隔；再将 `PROXY_GROUP` 改成 ClashX Pro 中实际的 Selector 名称。默认 `CONTROLLER_SECRET=auto`，会直接读取 ClashX Pro 保存的控制密钥，无需复制。如果自动读取失败，再手动填写。如果端口不同，也一并修改。保存后重启检查器：
+将 `PROXY_GROUP` 改成 ClashX Pro 中实际的 Selector 名称。默认 `CONTROLLER_SECRET=auto`，会直接读取 ClashX Pro 保存的控制密钥，无需复制。如果自动读取失败，再手动填写。如果端口不同，也一并修改。旧版配置中的 `TARGET_SSIDS` 和 `REQUIRE_CODEX_RUNNING` 会在升级安装时清理。保存后重启检查器：
 
 ```zsh
 launchctl kickstart -k "gui/$(id -u)/com.local.clashx-guardian"
@@ -51,7 +51,7 @@ tail -f "$HOME/Library/Logs/ClashXGuardianDiagnostic.log"
 
 诊断日志会保留菜单栏执行的 `launchctl` 命令、退出码和错误信息，也会接收两个 LaunchAgent 的标准错误输出；超过 512 KiB 时自动轮换并保留一份 `.previous`。
 
-更直观的状态位于 macOS 菜单栏，使用完整、居中、左右对称的盾牌图标：绿色表示正常、橙色表示正在累计失败、蓝色表示检测或切换、红色表示需要处理、灰色表示当前未启用或自动保护已停止。点击可查看 Wi-Fi、节点、线路诊断、候选测试进度、上次尝试、上次成功切换和最近 3 条事件，也可以立即检测、开启、暂停或重启自动保护。菜单栏应用每次打开时会自动启动尚未运行的 Guardian；启动期间会显示进度并暂时禁用重复操作，最多等待 120 秒，不会因连续点击反复杀掉正在启动的进程。
+更直观的状态位于 macOS 菜单栏，使用完整、居中、左右对称的盾牌图标：绿色表示正常、橙色表示正在累计失败、蓝色表示检测或切换、红色表示需要处理、灰色表示当前未启用或自动保护已停止。点击可查看 Wi-Fi、节点、线路诊断、候选测试进度、上次尝试、上次成功切换和最近 3 条事件，也可以立即检测、开启、暂停或重启自动保护。选择“退出 ClashX Guardian”会先停止后台自动保护，确认成功后再退出菜单栏。菜单栏应用每次打开时会自动启动尚未运行的 Guardian；启动期间会显示进度并暂时禁用重复操作，最多等待 120 秒，不会因连续点击反复杀掉正在启动的进程。
 
 首次启动时 macOS 可能询问是否允许通知。允许后，只有开始切换、恢复成功、切换失败或 ClashX Pro 控制接口不可用时才会通知，不会为每次健康检查弹窗。
 
@@ -81,8 +81,8 @@ launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.local.clashx-
 
 ## 资源与安全设计
 
-- Guardian 常驻进程绝大多数时间处于睡眠状态，默认每 5 秒唤醒一次；Codex 未运行时不做网络探测。
-- 仅在指定 Wi-Fi、系统代理和 Clash 控制接口均符合条件时发起小流量探测。
+- Guardian 常驻进程绝大多数时间处于睡眠状态，默认每 5 秒唤醒一次。
+- 开启后不限制 Wi-Fi 名称或 Codex 进程状态；系统代理和 Clash 控制接口符合条件时发起小流量探测。
 - 只有连续失败满 20 秒并再次确认失败才测速；像 ClashX 菜单一样并发测试策略组节点，不在健康状态额外测速。
 - 可用节点严格按本次实时延迟从低到高验证，历史可靠性只在延迟完全相同时打破平局。
 - 成功切换至少间隔 120 秒；失败尝试默认 30 秒后可重试，不会被错误地当成一次成功切换。
@@ -92,11 +92,10 @@ launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.local.clashx-
 
 ## 常见问题
 
-- 日志显示 `cannot read current SSID`：新版 macOS 可能要求定位权限才能读取 Wi-Fi 名称。到“系统设置 → 隐私与安全性 → 定位服务”中允许终端（手动测试时）或相关后台进程访问；不同 macOS 版本的显示方式可能不同。
+- 菜单栏无法显示 Wi-Fi 名称：新版 macOS 可能要求定位权限；这只影响名称展示，不会暂停线路检测。
 - 日志显示 `controller is unavailable`：检查 ClashX Pro 是否运行、`external-controller` 端口和 `CONTROLLER_SECRET` 是否一致。
 - 日志显示策略组不可选：`PROXY_GROUP` 必须精确匹配 ClashX Pro 中的 Selector 名称，大小写也要一致。
 - 使用 SOCKS 端口时，将 `PROXY_URL` 写成 `socks5h://127.0.0.1:端口`，并把 `REQUIRE_SYSTEM_PROXY=false`；系统代理检测只适用于 HTTP 代理。
-- 如果希望 Codex 未运行时也保护其他 OpenAI API 程序，将 `REQUIRE_CODEX_RUNNING` 改成 `false`。
 - 默认最多同时产生 64 个短时本地测速任务；节点更多时自动分批，只在故障确认后运行，常驻空闲 CPU 不受影响。可通过 `MAX_BENCHMARK_CONCURRENCY` 调整上限，实际切换次数仍受 `MAX_SWITCH_ATTEMPTS` 限制。
 
 ## 边界

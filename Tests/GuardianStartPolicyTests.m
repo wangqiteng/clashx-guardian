@@ -39,6 +39,17 @@ int main(void) {
                 "a diagnostic log at the size limit must be retained");
         Require(GuardianDiagnosticLogNeedsRotation(512 * 1024 + 1),
                 "an oversized diagnostic log must be rotated");
+        Require([GuardianStopArguments(@"gui/501/example")
+                    isEqualToArray:@[@"bootout", @"gui/501/example"]],
+                "quitting the menu bar app must request a Guardian bootout");
+        Require(!GuardianShouldTerminateAfterStop(NO),
+                "the menu bar app must stay visible when Guardian could not stop");
+        Require(GuardianShouldTerminateAfterStop(YES),
+                "the menu bar app may exit only after Guardian has stopped");
+        Require(GuardianQuitActionForService(NO) == GuardianQuitActionTerminate,
+                "quitting must succeed when Guardian is already absent");
+        Require(GuardianQuitActionForService(YES) == GuardianQuitActionStopService,
+                "quitting must stop a loaded Guardian even when cached status looks stopped");
         printf("start_policy_tests_ok=1\n");
     }
     return 0;

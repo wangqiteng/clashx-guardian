@@ -45,6 +45,9 @@ fi
 # 仅迁移旧版默认值；用户主动设置的其他数值不会被覆盖。
 sed -i '' 's/^CHECK_INTERVAL=10$/CHECK_INTERVAL=5/' "$install_dir/config.conf"
 sed -i '' 's/^FAILURE_SECONDS=30$/FAILURE_SECONDS=20/' "$install_dir/config.conf"
+# 新版在任意网络上工作，清理已不再生效的旧门控配置。
+sed -i '' '/^TARGET_SSIDS=/d' "$install_dir/config.conf"
+sed -i '' '/^REQUIRE_CODEX_RUNNING=/d' "$install_dir/config.conf"
 grep -q '^STATUS_FILE=' "$install_dir/config.conf" || print 'STATUS_FILE=~/Library/Application Support/ClashXGuardian/status.json' >> "$install_dir/config.conf"
 grep -q '^TRIGGER_FILE=' "$install_dir/config.conf" || print 'TRIGGER_FILE=~/Library/Application Support/ClashXGuardian/check-now' >> "$install_dir/config.conf"
 grep -q '^RUNTIME_STATE_FILE=' "$install_dir/config.conf" || print 'RUNTIME_STATE_FILE=~/Library/Application Support/ClashXGuardian/runtime-state.json' >> "$install_dir/config.conf"

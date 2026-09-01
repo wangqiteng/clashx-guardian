@@ -307,7 +307,7 @@ static int WriteApplicationIcon(NSString *path) {
     }
     self.eventItems = events;
     [self.menu addItem:NSMenuItem.separatorItem];
-    [self.menu addItem:[self actionItem:@"退出状态栏（自动保护继续运行）" selector:@selector(quitStatusApp:) key:@"q"]];
+    [self.menu addItem:[self actionItem:@"退出 ClashX Guardian（同时停止自动保护）" selector:@selector(quitStatusApp:) key:@"q"]];
     self.statusItem.menu = self.menu;
     [self updateControlItems];
     [self updateButton:GuardianAppearanceWorking tooltip:@"ClashX Guardian 正在启动"];
@@ -608,7 +608,27 @@ static int WriteApplicationIcon(NSString *path) {
     }
     [NSWorkspace.sharedWorkspace openURL:self.diagnosticLogURL];
 }
-- (void)quitStatusApp:(id)sender { (void)sender; [NSApp terminate:nil]; }
+- (void)quitStatusApp:(id)sender {
+    (void)sender;
+    self.summaryItem.title = @"自动保护：正在停止并退出…";
+    [self runLaunchctl:@[@"print", [self guardianServiceTarget]] completion:^(BOOL loaded, NSString *printOutput) {
+        if (GuardianQuitActionForService(loaded) == GuardianQuitActionTerminate) {
+            [NSApp terminate:nil];
+            return;
+        }
+        [self runLaunchctl:GuardianStopArguments([self guardianServiceTarget]) completion:^(BOOL success, NSString *message) {
+            if (!GuardianShouldTerminateAfterStop(success)) {
+                NSString *detail = message.length ? message : printOutput;
+                [self showAlert:@"无法退出 ClashX Guardian"
+                        message:detail.length ? detail : @"后台自动保护未能停止，请查看诊断日志。"];
+                [self refreshStatus];
+                return;
+            }
+            self.guardianRunning = NO;
+            [NSApp terminate:nil];
+        }];
+    }];
+}
 
 - (NSString *)relativeTime:(NSTimeInterval)timestamp {
     NSInteger seconds = MAX(0, (NSInteger)(NSDate.date.timeIntervalSince1970 - timestamp));
