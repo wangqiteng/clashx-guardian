@@ -24,9 +24,11 @@ trap 'rm -rf "$STAGE_ROOT"' EXIT
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 mkdir -p "$BUILD_DIR" "$STAGE_MACOS" "$STAGE_RESOURCES" "$STAGE_ICONSET"
 clang -fobjc-arc -Wall -Wextra -Werror -I"$ROOT_DIR/Sources" \
-  -framework Cocoa -framework UserNotifications \
+  -framework Cocoa -framework UserNotifications -framework ApplicationServices \
   "$ROOT_DIR/Sources/ClashXGuardianStatus/main.m" \
-  "$ROOT_DIR/Sources/GuardianStartPolicy.m" -o "$STAGE_BINARY"
+  "$ROOT_DIR/Sources/GuardianStartPolicy.m" \
+  "$ROOT_DIR/Sources/IKuuuNodeParser.m" \
+  "$ROOT_DIR/Sources/IKuuuAccessibilityAdapter.m" -o "$STAGE_BINARY"
 clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
   "$ROOT_DIR/Tests/GuardianStartPolicyTests.m" \
   "$ROOT_DIR/Sources/GuardianStartPolicy.m" -o "$STAGE_ROOT/GuardianStartPolicyTests"
@@ -35,6 +37,12 @@ clang -fobjc-arc -Wall -Wextra -Werror -I"$ROOT_DIR/Sources" -framework Foundati
   "$ROOT_DIR/Tests/IKuuuNodeParserTests.m" \
   "$ROOT_DIR/Sources/IKuuuNodeParser.m" -o "$STAGE_ROOT/IKuuuNodeParserTests"
 "$STAGE_ROOT/IKuuuNodeParserTests"
+clang -fobjc-arc -Wall -Wextra -Werror -I"$ROOT_DIR/Sources" \
+  -framework Cocoa -framework ApplicationServices \
+  "$ROOT_DIR/Tests/IKuuuAccessibilityAdapterTests.m" \
+  "$ROOT_DIR/Sources/IKuuuAccessibilityAdapter.m" \
+  "$ROOT_DIR/Sources/IKuuuNodeParser.m" -o "$STAGE_ROOT/IKuuuAccessibilityAdapterTests"
+"$STAGE_ROOT/IKuuuAccessibilityAdapterTests"
 "$STAGE_BINARY" --self-test "$ROOT_DIR/Tests/fixtures/healthy-status.json"
 "$STAGE_BINARY" --self-test "$ROOT_DIR/Tests/fixtures/switching-status.json"
 install -m 0755 "$STAGE_BINARY" "$BUILD_DIR/$APP_NAME"
