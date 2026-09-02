@@ -4,6 +4,7 @@
 #import <errno.h>
 #import <signal.h>
 #import "GuardianStartPolicy.h"
+#import "IKuuuRequestCoordinator.h"
 
 static NSString *const GuardianBundleID = @"com.local.ClashXGuardianStatus";
 
@@ -223,8 +224,11 @@ static int WriteApplicationIcon(NSString *path) {
 @property(nonatomic, strong) NSURL *baseDirectory, *statusURL, *triggerURL, *configURL, *logURL;
 @property(nonatomic, strong) NSMenuItem *summaryItem, *ssidItem, *nodeItem, *diagnosisItem, *checkedItem, *thresholdItem;
 @property(nonatomic, strong) NSMenuItem *attemptedItem, *switchedItem, *eventsHeaderItem;
+@property(nonatomic, strong) NSMenuItem *clientItem, *capabilityItem, *ikuuuPermissionItem;
 @property(nonatomic, strong) NSArray<NSMenuItem *> *eventItems;
 @property(nonatomic, strong) NSMenuItem *startItem, *stopItem, *restartItem;
+@property(nonatomic, strong) IKuuuAccessibilityAdapter *ikuuuAdapter;
+@property(nonatomic, strong) IKuuuRequestCoordinator *ikuuuCoordinator;
 @property(nonatomic) BOOL guardianRunning;
 @property(nonatomic) BOOL guardianStartInProgress;
 @property(nonatomic, copy) NSString *guardianOperationLabel;
@@ -243,6 +247,9 @@ static int WriteApplicationIcon(NSString *path) {
     self.configURL = [self.baseDirectory URLByAppendingPathComponent:@"config.conf"];
     self.logURL = [home URLByAppendingPathComponent:@"Library/Logs/ClashXGuardian.log"];
     self.diagnosticLogURL = [home URLByAppendingPathComponent:@"Library/Logs/ClashXGuardianDiagnostic.log"];
+    self.ikuuuAdapter = [IKuuuAccessibilityAdapter new];
+    self.ikuuuCoordinator = [[IKuuuRequestCoordinator alloc] initWithDirectory:self.baseDirectory
+                                                                        adapter:self.ikuuuAdapter];
     PrepareDiagnosticLog(self.diagnosticLogURL);
     freopen(self.diagnosticLogURL.fileSystemRepresentation, "a", stderr);
     setvbuf(stderr, NULL, _IOLBF, 0);
@@ -275,6 +282,8 @@ static int WriteApplicationIcon(NSString *path) {
     self.menu = [[NSMenu alloc] initWithTitle:@"ClashX Guardian"];
     self.menu.delegate = self;
     self.summaryItem = [self infoItem:@"正在读取状态…"];
+    self.clientItem = [self infoItem:@"当前客户端：—"];
+    self.capabilityItem = [self infoItem:@"自动切换：—"];
     self.ssidItem = [self infoItem:@"Wi-Fi：—"];
     self.nodeItem = [self infoItem:@"节点：—"];
     self.diagnosisItem = [self infoItem:@"线路：—"];
@@ -282,7 +291,8 @@ static int WriteApplicationIcon(NSString *path) {
     self.thresholdItem = [self infoItem:@"切换阈值：—"];
     self.attemptedItem = [self infoItem:@"上次尝试：—"];
     self.switchedItem = [self infoItem:@"成功切换：—"];
-    for (NSMenuItem *item in @[self.summaryItem, self.ssidItem, self.nodeItem, self.diagnosisItem,
+    for (NSMenuItem *item in @[self.summaryItem, self.clientItem, self.capabilityItem,
+                               self.ssidItem, self.nodeItem, self.diagnosisItem,
                                self.checkedItem, self.thresholdItem, self.attemptedItem, self.switchedItem]) [self.menu addItem:item];
     [self.menu addItem:NSMenuItem.separatorItem];
     [self.menu addItem:[self actionItem:@"立即检测" selector:@selector(checkNow:) key:@"r"]];
@@ -292,6 +302,9 @@ static int WriteApplicationIcon(NSString *path) {
     [self.menu addItem:self.startItem];
     [self.menu addItem:self.stopItem];
     [self.menu addItem:self.restartItem];
+    self.ikuuuPermissionItem = [self actionItem:@"授权 iKuuu 自动保护"
+                                       selector:@selector(authorizeIKuuu:) key:@""];
+    [self.menu addItem:self.ikuuuPermissionItem];
     [self.menu addItem:NSMenuItem.separatorItem];
     [self.menu addItem:[self actionItem:@"打开配置" selector:@selector(openConfig:) key:@""]];
     [self.menu addItem:[self actionItem:@"打开日志" selector:@selector(openLog:) key:@""]];
@@ -319,11 +332,25 @@ static int WriteApplicationIcon(NSString *path) {
 }
 
 - (void)refreshStatus {
+    [self.ikuuuCoordinator pollOnce];
     NSError *error = nil;
     NSDictionary *status = ReadStatus(self.statusURL, &error);
     if (!status) { [self renderUnavailable:error]; return; }
     [self render:status];
     [self handleTransition:status];
+}
+
+- (void)authorizeIKuuu:(id)sender {
+    (void)sender;
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = @"授权 iKuuu 自动保护";
+    alert.informativeText = @"ClashX Guardian 需要 macOS 辅助功能权限，才能在网络故障时读取 iKuuu 的测速结果并选择节点。它不会移动鼠标、输入文字或读取账号与订阅。";
+    [alert addButtonWithTitle:@"继续授权"];
+    [alert addButtonWithTitle:@"稍后"];
+    if ([alert runModal] != NSAlertFirstButtonReturn) return;
+    [self.ikuuuAdapter requestAccessibilityPermission];
+    NSURL *settingsURL = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
+    if (settingsURL) [NSWorkspace.sharedWorkspace openURL:settingsURL];
 }
 
 - (void)render:(NSDictionary *)status {

@@ -28,7 +28,8 @@ clang -fobjc-arc -Wall -Wextra -Werror -I"$ROOT_DIR/Sources" \
   "$ROOT_DIR/Sources/ClashXGuardianStatus/main.m" \
   "$ROOT_DIR/Sources/GuardianStartPolicy.m" \
   "$ROOT_DIR/Sources/IKuuuNodeParser.m" \
-  "$ROOT_DIR/Sources/IKuuuAccessibilityAdapter.m" -o "$STAGE_BINARY"
+  "$ROOT_DIR/Sources/IKuuuAccessibilityAdapter.m" \
+  "$ROOT_DIR/Sources/IKuuuRequestCoordinator.m" -o "$STAGE_BINARY"
 clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
   "$ROOT_DIR/Tests/GuardianStartPolicyTests.m" \
   "$ROOT_DIR/Sources/GuardianStartPolicy.m" -o "$STAGE_ROOT/GuardianStartPolicyTests"
@@ -43,6 +44,13 @@ clang -fobjc-arc -Wall -Wextra -Werror -I"$ROOT_DIR/Sources" \
   "$ROOT_DIR/Sources/IKuuuAccessibilityAdapter.m" \
   "$ROOT_DIR/Sources/IKuuuNodeParser.m" -o "$STAGE_ROOT/IKuuuAccessibilityAdapterTests"
 "$STAGE_ROOT/IKuuuAccessibilityAdapterTests"
+clang -fobjc-arc -Wall -Wextra -Werror -I"$ROOT_DIR/Sources" \
+  -framework Cocoa -framework ApplicationServices \
+  "$ROOT_DIR/Tests/IKuuuRequestCoordinatorTests.m" \
+  "$ROOT_DIR/Sources/IKuuuRequestCoordinator.m" \
+  "$ROOT_DIR/Sources/IKuuuAccessibilityAdapter.m" \
+  "$ROOT_DIR/Sources/IKuuuNodeParser.m" -o "$STAGE_ROOT/IKuuuRequestCoordinatorTests"
+"$STAGE_ROOT/IKuuuRequestCoordinatorTests"
 "$STAGE_BINARY" --self-test "$ROOT_DIR/Tests/fixtures/healthy-status.json"
 "$STAGE_BINARY" --self-test "$ROOT_DIR/Tests/fixtures/switching-status.json"
 install -m 0755 "$STAGE_BINARY" "$BUILD_DIR/$APP_NAME"
