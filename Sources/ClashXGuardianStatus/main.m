@@ -494,12 +494,15 @@ static int WriteApplicationIcon(NSString *path) {
     NSString *state = status[@"state"], *previous = self.previousState;
     self.previousState = state;
     if (!previous || [previous isEqualToString:state]) return;
-    if ([state isEqualToString:@"switching"]) [self notify:@"Codex 线路异常" body:@"正在测试并切换 ClashX 节点"];
+    NSString *client = ClientDisplayName(status[@"activeClient"]);
+    if ([state isEqualToString:@"switching"])
+        [self notify:@"Codex 线路异常" body:[NSString stringWithFormat:@"正在通过 %@ 测速并切换节点", client]];
     else if ([state isEqualToString:@"healthy"] && [@[@"unhealthy", @"switching", @"switch_failed", @"controller_off"] containsObject:previous]) {
         NSString *node = [status[@"currentNode"] length] ? status[@"currentNode"] : @"可用节点";
         [self notify:@"Codex 网络已恢复" body:[NSString stringWithFormat:@"当前节点：%@", node]];
     } else if ([state isEqualToString:@"switch_failed"]) [self notify:@"Codex 网络恢复失败" body:@"没有候选节点通过完整连通性检查"];
-    else if ([state isEqualToString:@"controller_off"]) [self notify:@"ClashX Pro 不可用" body:@"Guardian 无法访问本地控制接口"];
+    else if ([state isEqualToString:@"controller_off"])
+        [self notify:@"ClashX Pro 不可用" body:@"Guardian 无法访问本地控制接口或安全识别策略组"];
 }
 
 - (void)requestNotificationPermission {
@@ -788,10 +791,32 @@ static int RunSelfTest(NSString *path) {
     return appearance == GuardianAppearanceHealthy || appearance == GuardianAppearanceWorking ? 0 : 1;
 }
 
+static int RunIKuuuReadOnlySelfTest(void) {
+    IKuuuAccessibilityAdapter *adapter = [IKuuuAccessibilityAdapter new];
+    IKuuuAccessibilityState state = adapter.state;
+    if (state != IKuuuAccessibilityStateReady) {
+        printf("ikuuu_self_test_ok=0 state=%ld action=none\n", (long)state);
+        return 2;
+    }
+    NSError *error = nil;
+    IKuuuAXSnapshot *snapshot = [adapter inspectWithError:&error];
+    NSArray<IKuuuNodeResult *> *nodes = snapshot ? IKuuuNodesFromSnapshot(snapshot, &error) : nil;
+    NSString *current = [adapter currentNodeWithError:nil] ?: @"unknown";
+    if (nodes.count < 2) {
+        fprintf(stderr, "iKuuu read-only self-test failed: %s\n",
+                (error.localizedDescription ?: @"insufficient nodes").UTF8String);
+        return 1;
+    }
+    printf("ikuuu_self_test_ok=1 client=ikuuu nodes=%ld current=%s action=none\n",
+           (long)nodes.count, current.UTF8String);
+    return 0;
+}
+
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         if (argc == 3 && strcmp(argv[1], "--self-test") == 0) return RunSelfTest([NSString stringWithUTF8String:argv[2]]);
         if (argc == 3 && strcmp(argv[1], "--render-app-icon") == 0) return WriteApplicationIcon([NSString stringWithUTF8String:argv[2]]);
+        if (argc == 2 && strcmp(argv[1], "--ikuuu-self-test") == 0) return RunIKuuuReadOnlySelfTest();
         NSApplication *app = NSApplication.sharedApplication;
         GuardianAppDelegate *delegate = [GuardianAppDelegate new];
         app.delegate = delegate;

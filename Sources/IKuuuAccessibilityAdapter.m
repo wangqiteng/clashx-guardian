@@ -22,14 +22,18 @@ static NSError *IKuuuError(IKuuuAccessibilityError code, NSString *message) {
                            userInfo:@{NSLocalizedDescriptionKey: message}];
 }
 
-NSArray<IKuuuNodeResult *> *IKuuuNodesFromSnapshot(IKuuuAXSnapshot *snapshot, NSError **error) {
+BOOL IKuuuSnapshotHasServerSemantics(IKuuuAXSnapshot *snapshot) {
     BOOL hasServer = NO;
     BOOL hasSelector = NO;
     for (NSString *string in snapshot.strings) {
         hasServer = hasServer || [string containsString:@"服务器"];
         hasSelector = hasSelector || [string containsString:@"选择节点"];
     }
-    if (!hasServer || !hasSelector) {
+    return hasServer && hasSelector;
+}
+
+NSArray<IKuuuNodeResult *> *IKuuuNodesFromSnapshot(IKuuuAXSnapshot *snapshot, NSError **error) {
+    if (!IKuuuSnapshotHasServerSemantics(snapshot)) {
         if (error) *error = IKuuuError(IKuuuAccessibilityErrorIncompatible,
                                       @"未识别到 iKuuu 服务器与节点选择区域");
         return nil;
@@ -143,7 +147,7 @@ static BOOL IKuuuElementFrame(AXUIElementRef element, CGRect *frame) {
     if (!AXIsProcessTrusted()) return IKuuuAccessibilityStatePermissionRequired;
     NSError *error = nil;
     IKuuuAXSnapshot *snapshot = [self inspectWithError:&error];
-    if (!snapshot || !IKuuuNodesFromSnapshot(snapshot, &error)) return IKuuuAccessibilityStateIncompatible;
+    if (!snapshot || !IKuuuSnapshotHasServerSemantics(snapshot)) return IKuuuAccessibilityStateIncompatible;
     return IKuuuAccessibilityStateReady;
 }
 
@@ -220,10 +224,11 @@ static BOOL IKuuuElementFrame(AXUIElementRef element, CGRect *frame) {
     NSMutableArray<NSString *> *strings = [NSMutableArray array];
     AXUIElementRef window = [self copyWindowWithElements:elements strings:strings error:error];
     if (!window) return nil;
-    NSError *snapshotError = nil;
-    if (!IKuuuNodesFromSnapshot([[IKuuuAXSnapshot alloc] initWithStrings:strings], &snapshotError)) {
+    IKuuuAXSnapshot *initialSnapshot = [[IKuuuAXSnapshot alloc] initWithStrings:strings];
+    if (!IKuuuSnapshotHasServerSemantics(initialSnapshot)) {
         CFRelease(window);
-        if (error) *error = snapshotError;
+        if (error) *error = IKuuuError(IKuuuAccessibilityErrorIncompatible,
+                                      @"未识别到 iKuuu 服务器与节点选择区域");
         return nil;
     }
     AXUIElementRef refreshButton = [self copyRefreshButtonInWindow:window elements:elements];

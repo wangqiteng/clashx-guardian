@@ -137,6 +137,7 @@ while ($running) {
 
     if ($active_client eq 'none') {
         $switch_capability = 'client_not_running';
+        $current_node = '';
         state_log('client_off', 'INFO', "$network_context, but no supported proxy client is running");
         $fail_since = undef;
         interruptible_sleep($interval);

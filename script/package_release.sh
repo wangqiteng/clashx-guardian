@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${1:-2.3.0}"
+VERSION="${1:-2.4.0}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_DIR="$ROOT_DIR/outputs/clashx-guardian"
 APP_NAME="ClashX Guardian Status.app"
@@ -21,8 +21,17 @@ mkdir -p "$RELEASE_DIR/Source"
 install -m 0644 "$ROOT_DIR/Sources/ClashXGuardianStatus/main.m" "$RELEASE_DIR/Source/ClashXGuardianStatus.m"
 install -m 0644 "$ROOT_DIR/Sources/GuardianStartPolicy.h" "$RELEASE_DIR/Source/GuardianStartPolicy.h"
 install -m 0644 "$ROOT_DIR/Sources/GuardianStartPolicy.m" "$RELEASE_DIR/Source/GuardianStartPolicy.m"
+install -m 0644 "$ROOT_DIR/Sources/IKuuuNodeParser.h" "$RELEASE_DIR/Source/IKuuuNodeParser.h"
+install -m 0644 "$ROOT_DIR/Sources/IKuuuNodeParser.m" "$RELEASE_DIR/Source/IKuuuNodeParser.m"
+install -m 0644 "$ROOT_DIR/Sources/IKuuuAccessibilityAdapter.h" "$RELEASE_DIR/Source/IKuuuAccessibilityAdapter.h"
+install -m 0644 "$ROOT_DIR/Sources/IKuuuAccessibilityAdapter.m" "$RELEASE_DIR/Source/IKuuuAccessibilityAdapter.m"
+install -m 0644 "$ROOT_DIR/Sources/IKuuuRequestCoordinator.h" "$RELEASE_DIR/Source/IKuuuRequestCoordinator.h"
+install -m 0644 "$ROOT_DIR/Sources/IKuuuRequestCoordinator.m" "$RELEASE_DIR/Source/IKuuuRequestCoordinator.m"
 mkdir -p "$RELEASE_DIR/Tests"
 install -m 0644 "$ROOT_DIR/Tests/GuardianStartPolicyTests.m" "$RELEASE_DIR/Tests/GuardianStartPolicyTests.m"
+install -m 0644 "$ROOT_DIR/Tests/IKuuuNodeParserTests.m" "$RELEASE_DIR/Tests/IKuuuNodeParserTests.m"
+install -m 0644 "$ROOT_DIR/Tests/IKuuuAccessibilityAdapterTests.m" "$RELEASE_DIR/Tests/IKuuuAccessibilityAdapterTests.m"
+install -m 0644 "$ROOT_DIR/Tests/IKuuuRequestCoordinatorTests.m" "$RELEASE_DIR/Tests/IKuuuRequestCoordinatorTests.m"
 chmod 0755 "$RELEASE_DIR/clashx-guardian.pl" "$RELEASE_DIR/install.sh" "$RELEASE_DIR/uninstall.sh"
 xattr -cr "$RELEASE_DIR"
 codesign --force --deep --sign - "$RELEASE_DIR/$APP_NAME" >/dev/null

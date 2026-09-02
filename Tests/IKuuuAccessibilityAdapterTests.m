@@ -27,6 +27,15 @@ static void TestRequiresAtLeastTwoMeasuredNodes(void) {
     NSCAssert(error.code == IKuuuAccessibilityErrorInsufficientNodes, @"应报告候选不足");
 }
 
+static void TestCompatibleStructureDoesNotRequirePreviousMeasurements(void) {
+    IKuuuAXSnapshot *fresh = [[IKuuuAXSnapshot alloc] initWithStrings:@[
+        @"服务器", @"选择节点", @"🇭🇰 香港Y03 | IEPL", @"🇯🇵 日本Y01 | IEPL"
+    ]];
+    NSCAssert(IKuuuSnapshotHasServerSemantics(fresh), @"首次测速前只要结构完整就应兼容");
+    IKuuuAXSnapshot *wrongPage = [[IKuuuAXSnapshot alloc] initWithStrings:@[@"主页", @"我的"]];
+    NSCAssert(!IKuuuSnapshotHasServerSemantics(wrongPage), @"错误页面不能通过结构检查");
+}
+
 static void TestStableSamplesNeedConsecutiveAgreement(void) {
     NSCAssert(IKuuuDelaySamplesAreStable(@[
         @[@45, @135], @[@45, @135]
@@ -46,6 +55,7 @@ int main(void) {
     @autoreleasepool {
         TestRequiresServerSemantics();
         TestRequiresAtLeastTwoMeasuredNodes();
+        TestCompatibleStructureDoesNotRequirePreviousMeasurements();
         TestStableSamplesNeedConsecutiveAgreement();
         TestSelectionConfirmationAllowsHeaderShortName();
         puts("ikuuu_accessibility_adapter_tests_ok=1");
