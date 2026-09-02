@@ -45,6 +45,9 @@ fi
 # 仅迁移旧版默认值；用户主动设置的其他数值不会被覆盖。
 sed -i '' 's/^CHECK_INTERVAL=10$/CHECK_INTERVAL=5/' "$install_dir/config.conf"
 sed -i '' 's/^FAILURE_SECONDS=30$/FAILURE_SECONDS=20/' "$install_dir/config.conf"
+sed -i '' 's|^PROXY_URL=http://127.0.0.1:7890$|PROXY_URL=auto|' "$install_dir/config.conf"
+sed -i '' 's|^CONTROLLER_URL=http://127.0.0.1:9090$|CONTROLLER_URL=auto|' "$install_dir/config.conf"
+sed -i '' 's/^PROXY_GROUP=Proxy$/PROXY_GROUP=auto/' "$install_dir/config.conf"
 # 新版在任意网络上工作，清理已不再生效的旧门控配置。
 sed -i '' '/^TARGET_SSIDS=/d' "$install_dir/config.conf"
 sed -i '' '/^REQUIRE_CODEX_RUNNING=/d' "$install_dir/config.conf"
@@ -55,6 +58,7 @@ grep -q '^FAILED_RETRY_COOLDOWN=' "$install_dir/config.conf" || print 'FAILED_RE
 grep -q '^CONFIRMATION_DELAY=' "$install_dir/config.conf" || print 'CONFIRMATION_DELAY=3' >> "$install_dir/config.conf"
 grep -q '^MAX_PARALLEL_TESTS=' "$install_dir/config.conf" || print 'MAX_PARALLEL_TESTS=3' >> "$install_dir/config.conf"
 grep -q '^COMMON_FAILURE_LIMIT=' "$install_dir/config.conf" || print 'COMMON_FAILURE_LIMIT=2' >> "$install_dir/config.conf"
+grep -q '^PROXY_CLIENT=' "$install_dir/config.conf" || print 'PROXY_CLIENT=auto' >> "$install_dir/config.conf"
 
 escaped_program=${install_dir//&/&amp;}
 escaped_program=${escaped_program//</&lt;}
@@ -128,9 +132,8 @@ STATUS_PLIST
   bootstrap_with_retry "gui/$(id -u)" "$status_plist_path"
 fi
 
-print "安装完成。请先编辑配置，然后执行："
-print "  open -e '$install_dir/config.conf'"
-print "  launchctl kickstart -k 'gui/$(id -u)/$label'"
+print "安装完成。Guardian 会自动识别已运行的 ClashX Pro 或 iKuuuVPN。"
+print "无需编辑配置；高级选项位于：$install_dir/config.conf"
 print "运行日志：$guardian_log"
 print "启动诊断：$diagnostic_log"
 print "菜单栏：彩色网络状态图标"

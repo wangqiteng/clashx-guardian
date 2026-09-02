@@ -69,6 +69,7 @@ my $log_file = expand_path($cfg{LOG_FILE} || '~/Library/Logs/ClashXGuardian.log'
 my $lock_file = expand_path($cfg{LOCK_FILE} || '~/Library/Caches/ClashXGuardian.lock');
 my $status_file = expand_path($cfg{STATUS_FILE} || '~/Library/Application Support/ClashXGuardian/status.json');
 my $trigger_file = expand_path($cfg{TRIGGER_FILE} || '~/Library/Application Support/ClashXGuardian/check-now');
+my $recovery_file = expand_path('~/Library/Application Support/ClashXGuardian/recovery-now');
 my $runtime_file = expand_path($cfg{RUNTIME_STATE_FILE} || '~/Library/Application Support/ClashXGuardian/runtime-state.json');
 my $ikuuu_request_file = expand_path('~/Library/Application Support/ClashXGuardian/ikuuu-request.json');
 my $ikuuu_response_file = expand_path('~/Library/Application Support/ClashXGuardian/ikuuu-response.json');
@@ -76,6 +77,7 @@ ensure_parent($log_file);
 ensure_parent($lock_file);
 ensure_parent($status_file);
 ensure_parent($trigger_file);
+ensure_parent($recovery_file);
 ensure_parent($runtime_file);
 ensure_parent($ikuuu_request_file);
 ensure_parent($ikuuu_response_file);
@@ -120,6 +122,8 @@ log_msg('INFO', "started; Wi-Fi device=" . ($wifi_device || 'not found'));
 state_log('starting', 'INFO', 'ClashX Guardian is starting');
 
 while ($running) {
+    my $force_recovery = -e $recovery_file ? 1 : 0;
+    unlink $recovery_file if $force_recovery;
     $wifi_device ||= find_wifi_device();
     my $ssid = $wifi_device ? current_ssid($wifi_device) : undef;
     $active_ssid = defined($ssid) ? $ssid : '';
@@ -176,6 +180,16 @@ while ($running) {
                                                  : 'status_app_unavailable';
             }
         }
+    }
+
+    if ($force_recovery) {
+        $last_attempt = time;
+        save_runtime_state();
+        state_log('switching', 'WARN', 'manual latency benchmark and recovery requested');
+        my $switched = switch_to_working_node();
+        state_log('switch_failed', 'ERROR', 'manual recovery did not find a working candidate') unless $switched;
+        interruptible_sleep($interval);
+        next;
     }
 
     my $diagnosis = diagnose_connectivity();

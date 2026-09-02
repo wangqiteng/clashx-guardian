@@ -33,6 +33,26 @@ typedef NS_ENUM(NSInteger, GuardianAppearance) {
 static NSImage *GuardianStatusImage(GuardianAppearance appearance);
 static NSImage *GuardianApplicationIconImage(void);
 
+static NSString *ClientDisplayName(id value) {
+    NSString *client = [value isKindOfClass:NSString.class] ? value : @"none";
+    if ([client isEqualToString:@"clashx"]) return @"ClashX Pro";
+    if ([client isEqualToString:@"ikuuu"]) return @"iKuuuVPN";
+    return @"未检测到";
+}
+
+static NSString *CapabilityDisplayName(id value) {
+    NSString *capability = [value isKindOfClass:NSString.class] ? value : @"unknown";
+    if ([capability isEqualToString:@"ready"]) return @"可用";
+    if ([capability isEqualToString:@"permission_required"]) return @"等待辅助功能授权";
+    if ([capability isEqualToString:@"incompatible"] || [capability isEqualToString:@"group_ambiguous"])
+        return @"当前版本或配置无法安全识别";
+    if ([capability isEqualToString:@"controller_off"]) return @"ClashX Controller 不可用";
+    if ([capability isEqualToString:@"system_proxy_off"]) return @"系统代理未开启";
+    if ([capability isEqualToString:@"client_not_running"]) return @"代理客户端未运行";
+    if ([capability isEqualToString:@"status_app_unavailable"]) return @"iKuuu 协调器暂不可用";
+    return @"正在检查";
+}
+
 static GuardianAppearance BaseAppearance(NSString *state, NSString *level) {
     if ([state isEqualToString:@"healthy"]) return GuardianAppearanceHealthy;
     if ([state isEqualToString:@"unhealthy"] || [state isEqualToString:@"cooldown"]) return GuardianAppearanceWarning;
@@ -221,7 +241,7 @@ static int WriteApplicationIcon(NSString *path) {
 @property(nonatomic, strong) NSMenu *menu;
 @property(nonatomic, strong) NSTimer *timer;
 @property(nonatomic, copy) NSString *previousState;
-@property(nonatomic, strong) NSURL *baseDirectory, *statusURL, *triggerURL, *configURL, *logURL;
+@property(nonatomic, strong) NSURL *baseDirectory, *statusURL, *triggerURL, *recoveryURL, *configURL, *logURL;
 @property(nonatomic, strong) NSMenuItem *summaryItem, *ssidItem, *nodeItem, *diagnosisItem, *checkedItem, *thresholdItem;
 @property(nonatomic, strong) NSMenuItem *attemptedItem, *switchedItem, *eventsHeaderItem;
 @property(nonatomic, strong) NSMenuItem *clientItem, *capabilityItem, *ikuuuPermissionItem;
@@ -231,6 +251,7 @@ static int WriteApplicationIcon(NSString *path) {
 @property(nonatomic, strong) IKuuuRequestCoordinator *ikuuuCoordinator;
 @property(nonatomic) BOOL guardianRunning;
 @property(nonatomic) BOOL guardianStartInProgress;
+@property(nonatomic) BOOL authorizationPromptScheduled;
 @property(nonatomic, copy) NSString *guardianOperationLabel;
 @property(nonatomic, strong) NSURL *diagnosticLogURL;
 @end
@@ -244,6 +265,7 @@ static int WriteApplicationIcon(NSString *path) {
     self.baseDirectory = [home URLByAppendingPathComponent:@"Library/Application Support/ClashXGuardian" isDirectory:YES];
     self.statusURL = [self.baseDirectory URLByAppendingPathComponent:@"status.json"];
     self.triggerURL = [self.baseDirectory URLByAppendingPathComponent:@"check-now"];
+    self.recoveryURL = [self.baseDirectory URLByAppendingPathComponent:@"recovery-now"];
     self.configURL = [self.baseDirectory URLByAppendingPathComponent:@"config.conf"];
     self.logURL = [home URLByAppendingPathComponent:@"Library/Logs/ClashXGuardian.log"];
     self.diagnosticLogURL = [home URLByAppendingPathComponent:@"Library/Logs/ClashXGuardianDiagnostic.log"];
@@ -296,6 +318,7 @@ static int WriteApplicationIcon(NSString *path) {
                                self.checkedItem, self.thresholdItem, self.attemptedItem, self.switchedItem]) [self.menu addItem:item];
     [self.menu addItem:NSMenuItem.separatorItem];
     [self.menu addItem:[self actionItem:@"立即检测" selector:@selector(checkNow:) key:@"r"]];
+    [self.menu addItem:[self actionItem:@"立即测速并恢复" selector:@selector(recoverNow:) key:@""]];
     self.startItem = [self actionItem:@"开启自动保护" selector:@selector(startGuardian:) key:@""];
     self.stopItem = [self actionItem:@"暂停自动保护" selector:@selector(stopGuardian:) key:@""];
     self.restartItem = [self actionItem:@"重启自动保护" selector:@selector(restartGuardian:) key:@""];
@@ -328,6 +351,15 @@ static int WriteApplicationIcon(NSString *path) {
 
 - (GuardianAppearance)appearanceForStatus:(NSDictionary *)status {
     if (NSDate.date.timeIntervalSince1970 - [status[@"timestamp"] doubleValue] > 20) return GuardianAppearanceStopped;
+    NSString *client = [status[@"activeClient"] isKindOfClass:NSString.class] ? status[@"activeClient"] : @"";
+    NSString *capability = [status[@"switchCapability"] isKindOfClass:NSString.class]
+        ? status[@"switchCapability"] : @"";
+    if ([client isEqualToString:@"none"] || [capability isEqualToString:@"client_not_running"])
+        return GuardianAppearanceInactive;
+    if ([capability isEqualToString:@"permission_required"] || [capability isEqualToString:@"status_app_unavailable"])
+        return GuardianAppearanceWarning;
+    if ([capability isEqualToString:@"incompatible"] || [capability isEqualToString:@"group_ambiguous"])
+        return GuardianAppearanceError;
     return BaseAppearance(status[@"state"], status[@"level"]);
 }
 
@@ -353,6 +385,19 @@ static int WriteApplicationIcon(NSString *path) {
     if (settingsURL) [NSWorkspace.sharedWorkspace openURL:settingsURL];
 }
 
+- (void)maybePromptForIKuuuAuthorizationWithClient:(NSString *)client capability:(NSString *)capability {
+    if (self.authorizationPromptScheduled || ![client isEqualToString:@"ikuuu"] ||
+        ![capability isEqualToString:@"permission_required"]) return;
+    static NSString *const promptKey = @"IKuuuAccessibilityPromptWasShown";
+    if ([NSUserDefaults.standardUserDefaults boolForKey:promptKey]) return;
+    [NSUserDefaults.standardUserDefaults setBool:YES forKey:promptKey];
+    self.authorizationPromptScheduled = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self authorizeIKuuu:nil];
+        self.authorizationPromptScheduled = NO;
+    });
+}
+
 - (void)render:(NSDictionary *)status {
     GuardianAppearance appearance = [self appearanceForStatus:status];
     NSString *label = AppearanceLabel(appearance);
@@ -362,6 +407,15 @@ static int WriteApplicationIcon(NSString *path) {
                                                     SummaryText(status, isRunning, appearance));
     NSString *ssid = [status[@"ssid"] length] ? status[@"ssid"] : @"—";
     NSString *node = [status[@"currentNode"] length] ? status[@"currentNode"] : @"—";
+    NSString *activeClient = [status[@"activeClient"] isKindOfClass:NSString.class] ? status[@"activeClient"] : @"none";
+    NSString *capability = [status[@"switchCapability"] isKindOfClass:NSString.class]
+        ? status[@"switchCapability"] : @"unknown";
+    self.clientItem.title = [NSString stringWithFormat:@"当前客户端：%@", ClientDisplayName(activeClient)];
+    self.capabilityItem.title = [NSString stringWithFormat:@"自动切换：%@", CapabilityDisplayName(capability)];
+    self.ikuuuPermissionItem.hidden = ![activeClient isEqualToString:@"ikuuu"] || [capability isEqualToString:@"ready"];
+    self.ikuuuPermissionItem.title = [capability isEqualToString:@"permission_required"]
+        ? @"授权 iKuuu 自动保护" : @"重新检查 iKuuu 权限与兼容性";
+    [self maybePromptForIKuuuAuthorizationWithClient:activeClient capability:capability];
     self.ssidItem.title = [NSString stringWithFormat:@"Wi-Fi：%@", ssid];
     self.nodeItem.title = [NSString stringWithFormat:@"节点：%@", [self truncated:node]];
     self.diagnosisItem.title = [NSString stringWithFormat:@"线路：%@", [self diagnosisText:status[@"diagnosis"]]];
@@ -414,6 +468,8 @@ static int WriteApplicationIcon(NSString *path) {
     [self updateButton:GuardianAppearanceStopped tooltip:@"ClashX Guardian 状态不可用"];
     self.summaryItem.title = GuardianVisibleSummary(self.guardianOperationLabel,
                                                     @"自动保护：已暂停（重新打开本应用会自动开启）");
+    self.clientItem.title = @"当前客户端：—";
+    self.capabilityItem.title = @"自动切换：—";
     self.ssidItem.title = @"Wi-Fi：—"; self.nodeItem.title = @"节点：—"; self.diagnosisItem.title = @"线路：—";
     self.checkedItem.title = @"上次检测：—"; self.thresholdItem.title = @"切换阈值：—";
     self.attemptedItem.title = @"上次尝试：—"; self.switchedItem.title = @"成功切换：—";
@@ -468,6 +524,16 @@ static int WriteApplicationIcon(NSString *path) {
     if (!error) [[NSData data] writeToURL:self.triggerURL options:NSDataWritingAtomic error:&error];
     if (error) [self showAlert:@"无法请求检测" message:error.localizedDescription];
     else { self.summaryItem.title = @"状态：已请求立即检测…"; os_log_info(OS_LOG_DEFAULT, "immediate check requested"); }
+}
+
+- (void)recoverNow:(id)sender {
+    (void)sender;
+    NSError *error = nil;
+    [NSFileManager.defaultManager createDirectoryAtURL:self.baseDirectory
+                           withIntermediateDirectories:YES attributes:nil error:&error];
+    if (!error) [[NSData data] writeToURL:self.recoveryURL options:NSDataWritingAtomic error:&error];
+    if (error) [self showAlert:@"无法请求线路恢复" message:error.localizedDescription];
+    else self.summaryItem.title = @"状态：已请求立即测速并恢复…";
 }
 
 - (void)restartGuardian:(id)sender {
@@ -710,6 +776,12 @@ static int RunSelfTest(NSString *path) {
     if ([status[@"state"] isEqualToString:@"switching"] &&
         ![summary containsString:@"🇯🇵 日本 Y02 · 88 ms"]) {
         fprintf(stderr, "self-test failed: switching summary omitted measured candidate\n");
+        return 1;
+    }
+    NSString *expectedClient = [status[@"activeClient"] isEqualToString:@"ikuuu"] ? @"iKuuuVPN" : @"ClashX Pro";
+    if (![ClientDisplayName(status[@"activeClient"]) isEqualToString:expectedClient] ||
+        ![CapabilityDisplayName(status[@"switchCapability"]) isEqualToString:@"可用"]) {
+        fprintf(stderr, "self-test failed: client capability labels are incorrect\n");
         return 1;
     }
     printf("self_test_ok=1 state=%s appearance=%ld\n", [status[@"state"] UTF8String], (long)appearance);
