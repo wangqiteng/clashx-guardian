@@ -304,6 +304,31 @@ sub run_capture {
     return ($output, $? >> 8);
 }
 
+# 探测可选系统配置时，键不存在是正常分支，不应持续污染诊断日志。
+sub run_capture_quiet {
+    my (@cmd) = @_;
+    pipe(my $reader, my $writer) or return (undef, 127);
+    my $pid = fork();
+    if (!defined $pid) {
+        close $reader;
+        close $writer;
+        return (undef, 127);
+    }
+    if ($pid == 0) {
+        close $reader;
+        open STDERR, '>', '/dev/null' or POSIX::_exit(127);
+        open STDOUT, '>&', $writer or POSIX::_exit(127);
+        close $writer;
+        exec { $cmd[0] } @cmd or POSIX::_exit(127);
+    }
+    close $writer;
+    local $/;
+    my $output = <$reader> // '';
+    close $reader;
+    waitpid($pid, 0);
+    return ($output, $? >> 8);
+}
+
 sub choose_client {
     my %state = @_;
     return 'clashx' if $state{clash_ready} || $state{clash_running};
@@ -344,7 +369,7 @@ sub resolve_clash_controller {
     return $controller_setting unless $controller_setting =~ /^auto$/i;
     my @ports;
     for my $key (qw(api-port external-controller-port controller-port)) {
-        my ($value, $status) = run_capture('/usr/bin/defaults', 'read', 'com.west2online.ClashXPro', $key);
+        my ($value, $status) = run_capture_quiet('/usr/bin/defaults', 'read', 'com.west2online.ClashXPro', $key);
         next if $status || !defined($value) || $value !~ /^\s*(\d+)\s*$/;
         push @ports, 0 + $1 if $1 > 0 && $1 <= 65535;
     }
@@ -388,7 +413,7 @@ sub resolve_clash_group {
 }
 
 sub clashx_saved_secret {
-    my ($output, $status) = run_capture('/usr/bin/defaults', 'read',
+    my ($output, $status) = run_capture_quiet('/usr/bin/defaults', 'read',
         'com.west2online.ClashXPro', 'api-secret');
     return '' if $status || !defined $output;
     $output =~ s/^\s+|\s+$//g;
@@ -892,6 +917,10 @@ sub record_node_result {
 }
 
 sub run_internal_self_test {
+    my ($quiet_output, $quiet_status) = run_capture_quiet(
+        '/bin/sh', '-c', 'echo expected-noise >&2; exit 17');
+    die "quiet command runner leaked or lost exit status\n"
+        unless defined($quiet_output) && $quiet_output eq '' && $quiet_status == 17;
     $candidate_cursor = 0;
     $node_stats = {
         stable => { successes => 3, failures => 0, lastSuccessAt => int(time), averageDelay => 450 },
