@@ -42,16 +42,22 @@ die "SECONDARY_URLS cannot be empty\n" unless @secondary_urls;
 $required_success = scalar(@secondary_urls) if $required_success > @secondary_urls;
 my $delay_test_url = $cfg{DELAY_TEST_URL} || 'https://chatgpt.com/';
 
-my $controller = $cfg{CONTROLLER_URL} || 'http://127.0.0.1:9090';
+my $client_setting = lc($cfg{PROXY_CLIENT} || 'auto');
+die "PROXY_CLIENT must be auto, clashx, or ikuuu\n"
+    unless $client_setting =~ /^(?:auto|clashx|ikuuu)$/;
+my $controller_setting = $cfg{CONTROLLER_URL} || 'auto';
+my $controller = $controller_setting =~ /^auto$/i ? 'http://127.0.0.1:9090' : $controller_setting;
 $controller =~ s{/+$}{};
 die "CONTROLLER_URL must use loopback HTTP (for example http://127.0.0.1:9090)\n"
     unless $controller =~ m{^http://(?:127\.0\.0\.1|localhost):\d+$}i;
 
-my $proxy_url = $cfg{PROXY_URL} || 'http://127.0.0.1:7890';
+my $proxy_setting = $cfg{PROXY_URL} || 'auto';
+my $proxy_url = $proxy_setting =~ /^auto$/i ? 'http://127.0.0.1:7890' : $proxy_setting;
 die "PROXY_URL must use a loopback HTTP/SOCKS proxy\n"
     unless $proxy_url =~ m{^(?:http|socks5h?)://(?:127\.0\.0\.1|localhost):\d+$}i;
 
-my $group              = $cfg{PROXY_GROUP} || 'Proxy';
+my $group_setting      = $cfg{PROXY_GROUP} || 'auto';
+my $group              = $group_setting =~ /^auto$/i ? 'Proxy' : $group_setting;
 my $secret             = $cfg{CONTROLLER_SECRET} // '';
 $secret = clashx_saved_secret() if $secret =~ /^(?:auto)?$/i;
 my $require_sys_proxy  = bool_cfg('REQUIRE_SYSTEM_PROXY', 1);
@@ -64,11 +70,15 @@ my $lock_file = expand_path($cfg{LOCK_FILE} || '~/Library/Caches/ClashXGuardian.
 my $status_file = expand_path($cfg{STATUS_FILE} || '~/Library/Application Support/ClashXGuardian/status.json');
 my $trigger_file = expand_path($cfg{TRIGGER_FILE} || '~/Library/Application Support/ClashXGuardian/check-now');
 my $runtime_file = expand_path($cfg{RUNTIME_STATE_FILE} || '~/Library/Application Support/ClashXGuardian/runtime-state.json');
+my $ikuuu_request_file = expand_path('~/Library/Application Support/ClashXGuardian/ikuuu-request.json');
+my $ikuuu_response_file = expand_path('~/Library/Application Support/ClashXGuardian/ikuuu-response.json');
 ensure_parent($log_file);
 ensure_parent($lock_file);
 ensure_parent($status_file);
 ensure_parent($trigger_file);
 ensure_parent($runtime_file);
+ensure_parent($ikuuu_request_file);
+ensure_parent($ikuuu_response_file);
 my $lock_fh;
 unless ($test_mode) {
     open $lock_fh, '>>', $lock_file or die "Cannot open lock file $lock_file: $!\n";
@@ -103,6 +113,9 @@ my $last_diagnosis = {
     secondarySuccesses => 0, secondaryTotal => scalar(@secondary_urls),
 };
 my ($testing_index, $testing_total, $candidate_node) = (0, 0, '');
+my $active_client = 'none';
+my $switch_capability = 'client_not_running';
+my $last_ikuuu_inspect = 0;
 log_msg('INFO', "started; Wi-Fi device=" . ($wifi_device || 'not found'));
 state_log('starting', 'INFO', 'ClashX Guardian is starting');
 
@@ -111,28 +124,59 @@ while ($running) {
     my $ssid = $wifi_device ? current_ssid($wifi_device) : undef;
     $active_ssid = defined($ssid) ? $ssid : '';
     my $network_context = length($active_ssid) ? "on '$active_ssid'" : 'on the current network';
-    my $system_proxy_ready = !$require_sys_proxy || system_proxy_matches();
-    my $controller_ready = $system_proxy_ready ? controller_ok() : 0;
-    my $decision = monitoring_decision(
-        ssid => $ssid,
-        system_proxy => $system_proxy_ready, controller => $controller_ready);
+    my $resolved_proxy = resolve_proxy_url();
+    $proxy_url = $resolved_proxy if defined $resolved_proxy;
+    my $system_proxy_ready = !$require_sys_proxy || (defined($resolved_proxy) && system_proxy_matches());
+    my $clash_running = $client_setting ne 'ikuuu' && clashx_running();
+    my $ikuuu_running = $client_setting ne 'clashx' && process_running('iKuuuVPN');
+    $active_client = choose_client(clash_running => $clash_running, ikuuu_running => $ikuuu_running);
 
-    if ($decision eq 'system_proxy_off') {
+    if ($active_client eq 'none') {
+        $switch_capability = 'client_not_running';
+        state_log('client_off', 'INFO', "$network_context, but no supported proxy client is running");
+        $fail_since = undef;
+        interruptible_sleep($interval);
+        next;
+    }
+
+    unless ($system_proxy_ready) {
+        $switch_capability = 'system_proxy_off';
         state_log('system_proxy_off', 'INFO',
-            "$network_context, but the macOS system proxy is not enabled at the configured local port");
+            "$network_context, but no matching loopback macOS system proxy is enabled");
         $fail_since = undef;
         interruptible_sleep($interval);
         next;
     }
 
-    if ($decision eq 'controller_off') {
-        state_log('controller_off', 'WARN',
-            "$network_context, but Clash controller is unavailable; automatic switching is impossible");
-        $fail_since = undef;
-        interruptible_sleep($interval);
-        next;
+    if ($active_client eq 'clashx') {
+        $controller = resolve_clash_controller();
+        my $controller_ready = controller_ok();
+        my $resolved_group = $controller_ready ? resolve_clash_group() : undef;
+        if (!$controller_ready || !defined($resolved_group)) {
+            $switch_capability = $controller_ready ? 'group_ambiguous' : 'controller_off';
+            state_log('controller_off', 'WARN', $controller_ready
+                ? "$network_context, but the Clash selector group could not be identified safely"
+                : "$network_context, but Clash controller is unavailable; automatic switching is impossible");
+            $fail_since = undef;
+            interruptible_sleep($interval);
+            next;
+        }
+        $group = $resolved_group;
+        $switch_capability = 'ready';
+        $current_node = current_selected_node() // $current_node;
+    } else {
+        if (time - $last_ikuuu_inspect >= 30 || $switch_capability eq 'client_not_running') {
+            my $inspection = ikuuu_request('inspect', {}, 5);
+            $last_ikuuu_inspect = time;
+            if ($inspection && $inspection->{success}) {
+                $switch_capability = 'ready';
+                $current_node = $inspection->{currentNode} // $current_node;
+            } else {
+                $switch_capability = $inspection ? ($inspection->{code} // 'status_app_unavailable')
+                                                 : 'status_app_unavailable';
+            }
+        }
     }
-    $current_node = current_selected_node() // $current_node;
 
     my $diagnosis = diagnose_connectivity();
     $last_diagnosis = $diagnosis;
@@ -243,6 +287,89 @@ sub run_capture {
     my $output = <$fh> // '';
     close $fh;
     return ($output, $? >> 8);
+}
+
+sub choose_client {
+    my %state = @_;
+    return 'clashx' if $state{clash_ready} || $state{clash_running};
+    return 'ikuuu' if $state{ikuuu_running};
+    return 'none';
+}
+
+sub process_running {
+    my ($name) = @_;
+    my (undef, $status) = run_capture('/usr/bin/pgrep', '-x', $name);
+    return $status == 0 ? 1 : 0;
+}
+
+sub proxy_url_from_scutil {
+    my ($output) = @_;
+    return undef unless defined $output;
+    my $enabled = $output =~ /^\s*(?:HTTP|HTTPS)Enable\s*:\s*1\s*$/m;
+    my ($host) = $output =~ /^\s*(?:HTTP|HTTPS)Proxy\s*:\s*(\S+)\s*$/m;
+    my ($port) = $output =~ /^\s*(?:HTTP|HTTPS)Port\s*:\s*(\d+)\s*$/m;
+    return undef unless $enabled && defined($host) && defined($port);
+    return undef unless $host =~ /^(?:127\.0\.0\.1|localhost)$/i;
+    return undef unless $port > 0 && $port <= 65535;
+    return "http://$host:$port";
+}
+
+sub resolve_proxy_url {
+    return $proxy_setting unless $proxy_setting =~ /^auto$/i;
+    my ($output, $status) = run_capture('/usr/sbin/scutil', '--proxy');
+    return undef if $status;
+    return proxy_url_from_scutil($output);
+}
+
+sub clashx_running {
+    return process_running('ClashX Pro') || process_running('ClashX');
+}
+
+sub resolve_clash_controller {
+    return $controller_setting unless $controller_setting =~ /^auto$/i;
+    my @ports;
+    for my $key (qw(api-port external-controller-port controller-port)) {
+        my ($value, $status) = run_capture('/usr/bin/defaults', 'read', 'com.west2online.ClashXPro', $key);
+        next if $status || !defined($value) || $value !~ /^\s*(\d+)\s*$/;
+        push @ports, 0 + $1 if $1 > 0 && $1 <= 65535;
+    }
+    push @ports, 9090;
+    my %seen;
+    for my $port (grep { !$seen{$_}++ } @ports) {
+        my $candidate = "http://127.0.0.1:$port";
+        my $previous = $controller;
+        $controller = $candidate;
+        my $available = controller_ok();
+        $controller = $previous;
+        return $candidate if $available;
+    }
+    return 'http://127.0.0.1:9090';
+}
+
+sub resolve_clash_group {
+    return $group_setting unless $group_setting =~ /^auto$/i;
+    my $response = controller_request('GET', '/proxies', undef, 3);
+    return undef unless $response->{success};
+    my $data = eval { decode_json($response->{content}) };
+    return undef if $@ || ref($data) ne 'HASH' || ref($data->{proxies}) ne 'HASH';
+    my $proxies = $data->{proxies};
+    my @selectors = grep {
+        ref($proxies->{$_}) eq 'HASH'
+            && ($proxies->{$_}->{type} // '') =~ /selector/i
+            && ref($proxies->{$_}->{all}) eq 'ARRAY'
+            && @{$proxies->{$_}->{all}} >= 2
+    } keys %$proxies;
+    return undef unless @selectors;
+    my %selector = map { $_ => 1 } @selectors;
+    if (ref($proxies->{GLOBAL}) eq 'HASH' && ref($proxies->{GLOBAL}->{all}) eq 'ARRAY') {
+        for my $candidate (@{$proxies->{GLOBAL}->{all}}) {
+            return $candidate if $selector{$candidate};
+        }
+    }
+    my @named = grep { /^(?:proxy|节点选择|代理)$/i } @selectors;
+    return $named[0] if @named == 1;
+    return $selectors[0] if @selectors == 1;
+    return undef;
 }
 
 sub clashx_saved_secret {
@@ -383,6 +510,11 @@ sub diagnosis_message {
 }
 
 sub switch_to_working_node {
+    return switch_ikuuu_to_working_node() if $active_client eq 'ikuuu';
+    return switch_clashx_to_working_node();
+}
+
+sub switch_clashx_to_working_node {
     my $path = '/proxies/' . uri_escape_utf8($group);
     my $response = controller_request('GET', $path, undef, 5);
     unless ($response->{success}) {
@@ -475,6 +607,132 @@ sub switch_to_working_node {
         }
     }
     record_event('switch_failed', $switch_failed_message);
+    save_runtime_state();
+    ($testing_index, $testing_total, $candidate_node) = (0, 0, '');
+    return 0;
+}
+
+sub ikuuu_request {
+    my ($operation, $payload, $timeout) = @_;
+    $payload ||= {};
+    $timeout ||= 8;
+    my $id = sprintf('%d-%d-%06d', int(time * 1000), $$, int(rand(1_000_000)));
+    my $request = {
+        %$payload,
+        id => $id,
+        operation => $operation,
+        expiresAt => time + $timeout,
+    };
+    unlink $ikuuu_response_file if -f $ikuuu_response_file;
+    my $temporary = "$ikuuu_request_file.tmp.$$";
+    open my $fh, '>:raw', $temporary or return undef;
+    print {$fh} encode_json($request);
+    close $fh;
+    chmod 0600, $temporary;
+    rename $temporary, $ikuuu_request_file or do { unlink $temporary; return undef; };
+
+    my $deadline = time + $timeout;
+    while ($running && time < $deadline) {
+        if (open my $response_fh, '<:raw', $ikuuu_response_file) {
+            local $/;
+            my $content = <$response_fh> // '';
+            close $response_fh;
+            my $response = eval { decode_json($content) };
+            if (!$@ && ref($response) eq 'HASH' && ($response->{id} // '') eq $id) {
+                unlink $ikuuu_response_file;
+                return $response;
+            }
+        }
+        sleep 0.1;
+    }
+    if (-f $ikuuu_request_file) {
+        open my $request_fh, '<:raw', $ikuuu_request_file;
+        local $/;
+        my $content = $request_fh ? (<$request_fh> // '') : '';
+        close $request_fh if $request_fh;
+        my $pending = eval { decode_json($content) };
+        unlink $ikuuu_request_file
+            if !$@ && ref($pending) eq 'HASH' && ($pending->{id} // '') eq $id;
+    }
+    return undef;
+}
+
+sub switch_ikuuu_to_working_node {
+    unless ($switch_capability eq 'ready') {
+        log_msg('WARN', "iKuuu automatic switching unavailable: $switch_capability");
+        return 0;
+    }
+    $candidate_node = 'iKuuu 正在刷新全部节点延迟';
+    write_status('switching', 'WARN', 'requesting iKuuu full latency benchmark');
+    my $benchmark = ikuuu_request('benchmark', {}, 20);
+    unless ($benchmark && $benchmark->{success} && ref($benchmark->{candidates}) eq 'ARRAY') {
+        $switch_capability = $benchmark ? ($benchmark->{code} // 'benchmark_failed') : 'status_app_unavailable';
+        log_msg('WARN', "iKuuu benchmark failed: $switch_capability");
+        ($testing_index, $testing_total, $candidate_node) = (0, 0, '');
+        return 0;
+    }
+
+    my $original = $benchmark->{currentNode} // $current_node;
+    my @working = sort {
+        ($a->{delay} // 999999) <=> ($b->{delay} // 999999)
+            || ($a->{name} // '') cmp ($b->{name} // '')
+    } grep {
+        ref($_) eq 'HASH'
+            && defined($_->{name}) && length($_->{name})
+            && defined($_->{delay}) && $_->{delay} =~ /^\d+$/ && $_->{delay} > 0
+            && $_->{name} !~ $exclude_re
+            && (!length($original) || $_->{name} ne $original)
+    } @{$benchmark->{candidates}};
+    splice(@working, $max_attempts) if @working > $max_attempts;
+    $testing_total = scalar(@working);
+    $testing_index = 0;
+    my $common_failures = 0;
+    for my $candidate (@working) {
+        last unless $running;
+        $testing_index++;
+        my ($name, $delay) = ($candidate->{name}, 0 + $candidate->{delay});
+        $candidate_node = "$name · ${delay} ms";
+        write_status('switching', 'WARN', "verifying iKuuu candidate '$name' (${delay}ms)");
+        my $selected = ikuuu_request('select', { node => $name }, 8);
+        unless ($selected && $selected->{success}) {
+            log_msg('WARN', "iKuuu did not confirm candidate '$name'");
+            next;
+        }
+        $current_node = $selected->{currentNode} // $name;
+        interruptible_sleep($post_switch_wait);
+        last unless $running;
+        my $diagnosis = diagnose_connectivity();
+        $last_diagnosis = $diagnosis;
+        if ($diagnosis->{healthy}) {
+            $last_healthy = time;
+            $last_switch = time;
+            record_node_result($name, 1, $delay);
+            record_event('switched', "iKuuu 已切换到 $name（${delay} ms），Codex 线路恢复");
+            save_runtime_state();
+            write_status('healthy', 'INFO', "iKuuu node '$name' restored Codex connectivity");
+            $last_state = 'healthy';
+            ($testing_index, $testing_total, $candidate_node) = (0, 0, '');
+            return 1;
+        }
+        record_node_result($name, 0, $delay);
+        $common_failures++ if $diagnosis->{classification} eq 'route_unreachable';
+        if ($common_failures >= $common_failure_limit) {
+            $last_diagnosis = { %$diagnosis, classification => 'shared_outage_suspected' };
+            last;
+        }
+    }
+
+    my $message = 'iKuuu 候选节点均未通过完整连通性检查';
+    if (length $original) {
+        my $restored = ikuuu_request('restore', { node => $original }, 8);
+        if ($restored && $restored->{success}) {
+            $current_node = $restored->{currentNode} // $original;
+            $message .= '，已恢复原节点';
+        } else {
+            $message .= '，原节点恢复失败';
+        }
+    }
+    record_event('switch_failed', $message);
     save_runtime_state();
     ($testing_index, $testing_total, $candidate_node) = (0, 0, '');
     return 0;
@@ -669,6 +927,23 @@ sub run_internal_self_test {
         unless monitoring_decision(
             ssid => 'any', codex_running => 1,
             system_proxy => 1, controller => 0) eq 'controller_off';
+    die "self-test failed: ClashX must win when both clients are available\n"
+        unless choose_client(clash_ready => 1, ikuuu_running => 1) eq 'clashx';
+    die "self-test failed: iKuuu must be the fallback client\n"
+        unless choose_client(clash_ready => 0, ikuuu_running => 1) eq 'ikuuu';
+    die "self-test failed: no running client must wait\n"
+        unless choose_client(clash_ready => 0, ikuuu_running => 0) eq 'none';
+    my $detected_proxy = proxy_url_from_scutil(<<'SCUTIL');
+<dictionary> {
+  HTTPEnable : 1
+  HTTPPort : 7891
+  HTTPProxy : 127.0.0.1
+}
+SCUTIL
+    die "self-test failed: system proxy auto discovery\n"
+        unless defined($detected_proxy) && $detected_proxy eq 'http://127.0.0.1:7891';
+    die "self-test failed: non-loopback proxy must not be trusted\n"
+        if defined proxy_url_from_scutil("HTTPEnable : 1\nHTTPPort : 7891\nHTTPProxy : 192.168.1.2\n");
     print "guardian_self_test_ok=1 ranked=" . join(',', @ranked) . "\n";
     exit 0;
 }
@@ -773,7 +1048,7 @@ sub write_status {
     my ($state, $level, $message) = @_;
     my $now = time;
     my $payload = {
-        schemaVersion  => 1,
+        schemaVersion  => 2,
         state          => $state,
         level          => lc($level),
         message        => $message,
@@ -783,6 +1058,9 @@ sub write_status {
         wifiDevice     => $wifi_device // '',
         currentNode    => $current_node,
         proxyGroup     => $group,
+        activeClient   => $active_client,
+        switchCapability => $switch_capability,
+        clientRunning  => $active_client ne 'none' ? JSON::PP::true : JSON::PP::false,
         failureSince   => defined($fail_since) ? int($fail_since) : undef,
         failureElapsed => defined($fail_since) ? int($now - $fail_since) : 0,
         failureSeconds => int($failure_seconds),

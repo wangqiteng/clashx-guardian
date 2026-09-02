@@ -1,12 +1,14 @@
-# ClashX Pro 本地 HTTP 代理与控制接口。
-PROXY_URL=http://127.0.0.1:7890
-CONTROLLER_URL=http://127.0.0.1:9090
+# 自动识别已经运行的 ClashX Pro 或 iKuuuVPN；不会主动启动它们。
+PROXY_CLIENT=auto
+# 自动读取 macOS 当前回环系统代理、ClashX Pro 控制端口和可选策略组。
+PROXY_URL=auto
+CONTROLLER_URL=auto
 # auto 会从 ClashX Pro 用户偏好中读取，不把密钥复制到本文件。
 CONTROLLER_SECRET=auto
 
 # ClashX Pro 菜单中需要自动切换的 Selector 策略组名称，区分大小写。
 # 常见名称：Proxy、PROXY、节点选择、代理。
-PROXY_GROUP=Proxy
+PROXY_GROUP=auto
 
 # 默认要求 macOS “设置为系统代理”已经开启。
 # 如果你只使用 ClashX Pro 增强模式/TUN，请改为 false。
