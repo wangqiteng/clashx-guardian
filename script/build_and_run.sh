@@ -31,6 +31,10 @@ clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
   "$ROOT_DIR/Tests/GuardianStartPolicyTests.m" \
   "$ROOT_DIR/Sources/GuardianStartPolicy.m" -o "$STAGE_ROOT/GuardianStartPolicyTests"
 "$STAGE_ROOT/GuardianStartPolicyTests"
+clang -fobjc-arc -Wall -Wextra -Werror -I"$ROOT_DIR/Sources" -framework Foundation \
+  "$ROOT_DIR/Tests/IKuuuNodeParserTests.m" \
+  "$ROOT_DIR/Sources/IKuuuNodeParser.m" -o "$STAGE_ROOT/IKuuuNodeParserTests"
+"$STAGE_ROOT/IKuuuNodeParserTests"
 "$STAGE_BINARY" --self-test "$ROOT_DIR/Tests/fixtures/healthy-status.json"
 "$STAGE_BINARY" --self-test "$ROOT_DIR/Tests/fixtures/switching-status.json"
 install -m 0755 "$STAGE_BINARY" "$BUILD_DIR/$APP_NAME"
