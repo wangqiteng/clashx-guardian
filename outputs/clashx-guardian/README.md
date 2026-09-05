@@ -27,6 +27,8 @@ Guardian 只管理已经运行的代理软件。如果 ClashX Pro 和 iKuuuVPN �
 
 ### iKuuuVPN 首次授权
 
+2.4.1 支持在主页显示当前节点，需要恢复网络时自动进入服务器页测速。请保留 iKuuu 主窗口；辅助功能无法读取关闭的窗口时，Guardian 会停止自动切换。升级后若提示等待授权，请在系统设置中重新关闭、开启 Guardian 的辅助功能开关。
+
 当 iKuuuVPN 正在运行且 ClashX Pro 未运行时，Guardian 会提示授予 macOS“辅助功能”权限。点击“继续授权”，在“系统设置 → 隐私与安全性 → 辅助功能”中开启 `ClashX Guardian Status` 即可。用户选择稍后时不会反复弹窗，菜单中保留授权入口。
 
 分享包使用临时签名，升级应用后 macOS 可能要求重新开启该权限。使用 Developer ID 正式签名可以改善权限延续，但不影响本版本功能。

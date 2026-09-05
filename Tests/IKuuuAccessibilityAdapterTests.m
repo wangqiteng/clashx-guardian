@@ -47,12 +47,23 @@ static void TestStableSamplesNeedConsecutiveAgreement(void) {
 }
 
 static void TestSelectionConfirmationAllowsHeaderShortName(void) {
+    NSCAssert(!IKuuuSelectionMatches(@"日本Y01", @"日本Y010"), @"公共前缀不能确认另一个节点");
     NSCAssert(IKuuuSelectionMatches(@"🇭🇰 香港Y03", @"🇭🇰 香港Y03 | IEPL"), @"顶部短名应允许前缀确认");
     NSCAssert(!IKuuuSelectionMatches(@"🇭🇰 香港Y04", @"🇭🇰 香港Y03 | IEPL"), @"不同节点不得误判成功");
 }
 
 int main(void) {
     @autoreleasepool {
+        NSArray *deduplicated = IKuuuParseNodeLabels(@[@"节点 A\n42 ms", @"节点 A\n42 ms", @"容器\n节点 B\n43 ms"]);
+        NSCAssert(deduplicated.count == 1, @"容器聚合文本和重复标签不能产生虚假候选");
+        IKuuuAXSnapshot *home = [[IKuuuAXSnapshot alloc] initWithStrings:@[
+            @"主页\n第 1 个标签，共 3 个", @"服务器\n第 2 个标签，共 3 个", @"我的\n第 3 个标签，共 3 个",
+            @"当前节点\n🇯🇵 日本Y01 | IEPL\n99 ms\n7.7KB\n1.3MB"
+        ]];
+        NSCAssert(IKuuuSnapshotHasNavigation(home), @"主页必须被识别为支持的客户端");
+        NSCAssert(!IKuuuSnapshotHasServerSemantics(home), @"主页不能被误认为节点列表");
+        NSCAssert([IKuuuCurrentNodeFromLabels(home.strings) isEqualToString:@"🇯🇵 日本Y01 | IEPL"], @"主页应读出节点而非流量或延迟");
+        NSCAssert(!IKuuuSnapshotHasNavigation([[IKuuuAXSnapshot alloc] initWithStrings:@[@"服务器"]]), @"残缺页面不可自动导航");
         TestRequiresServerSemantics();
         TestRequiresAtLeastTwoMeasuredNodes();
         TestCompatibleStructureDoesNotRequirePreviousMeasurements();

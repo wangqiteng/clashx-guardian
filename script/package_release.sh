@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${1:-2.4.0}"
+VERSION="${1:-2.4.1}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_DIR="$ROOT_DIR/outputs/clashx-guardian"
 APP_NAME="ClashX Guardian Status.app"

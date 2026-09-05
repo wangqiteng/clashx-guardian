@@ -35,7 +35,12 @@ NSArray<IKuuuNodeResult *> *IKuuuParseNodeLabels(NSArray<NSString *> *labels) {
         if (delay <= 0 || delay > 99999) continue;
         NSString *name = [[label substringToIndex:match.range.location]
             stringByTrimmingCharactersInSet:whitespace];
-        if (name.length == 0) continue;
+        if (name.length == 0 || [name containsString:@"\n"]) continue;
+        BOOL duplicate = NO;
+        for (IKuuuNodeResult *existing in results) {
+            if ([existing.name isEqualToString:name]) { duplicate = YES; break; }
+        }
+        if (duplicate) continue;
         [results addObject:[[IKuuuNodeResult alloc] initWithName:name delayMilliseconds:delay]];
     }
     return results;

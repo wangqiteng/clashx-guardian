@@ -120,6 +120,11 @@ static NSString *IKuuuErrorCode(NSError *error) {
         response[@"success"] = @(state == IKuuuAccessibilityStateReady);
         response[@"code"] = IKuuuCapability(state);
         response[@"message"] = state == IKuuuAccessibilityStateReady ? @"iKuuu 自动切换可用" : @"iKuuu 自动切换尚不可用";
+        if (state == IKuuuAccessibilityStateIncompatible) {
+            NSError *inspectionError = nil;
+            [self.adapter inspectWithError:&inspectionError];
+            response[@"message"] = inspectionError.localizedDescription ?: @"未识别到 iKuuu 导航栏，请显示主窗口后重试";
+        }
         NSString *current = state == IKuuuAccessibilityStateReady ? [self.adapter currentNodeWithError:nil] : nil;
         if (current) response[@"currentNode"] = current;
         return response;

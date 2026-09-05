@@ -31,6 +31,8 @@ typedef NS_ENUM(NSInteger, IKuuuAccessibilityState) {
 NSArray<IKuuuNodeResult *> * _Nullable IKuuuNodesFromSnapshot(IKuuuAXSnapshot *snapshot,
                                                                NSError **error);
 BOOL IKuuuSnapshotHasServerSemantics(IKuuuAXSnapshot *snapshot);
+BOOL IKuuuSnapshotHasNavigation(IKuuuAXSnapshot *snapshot);
+NSString * _Nullable IKuuuCurrentNodeFromLabels(NSArray<NSString *> *labels);
 BOOL IKuuuDelaySamplesAreStable(NSArray<NSArray<NSNumber *> *> *samples, NSInteger requiredCount);
 BOOL IKuuuSelectionMatches(NSString *currentNode, NSString *targetNode);
 

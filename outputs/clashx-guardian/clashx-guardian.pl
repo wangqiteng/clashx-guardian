@@ -3,6 +3,7 @@
 use strict;
 use warnings;
 use utf8;
+use Encode qw(decode FB_DEFAULT);
 use Fcntl qw(:flock);
 use FindBin qw($Bin);
 use HTTP::Tiny;
@@ -170,7 +171,7 @@ while ($running) {
         $switch_capability = 'ready';
         $current_node = current_selected_node() // $current_node;
     } else {
-        if (time - $last_ikuuu_inspect >= 30 || $switch_capability eq 'client_not_running') {
+        if ($force_recovery || time - $last_ikuuu_inspect >= 30 || $switch_capability eq 'client_not_running') {
             my $inspection = ikuuu_request('inspect', {}, 5);
             $last_ikuuu_inspect = time;
             if ($inspection && $inspection->{success}) {
@@ -436,6 +437,7 @@ sub current_ssid {
     my ($device) = @_;
     my ($output, $status) = run_capture('/usr/sbin/networksetup', '-getairportnetwork', $device);
     return undef if $status || !defined $output;
+    $output = decode('UTF-8', $output, FB_DEFAULT);
     return $1 if $output =~ /Current Wi-Fi Network:\s*(.+?)\s*$/;
     return '' if $output =~ /not associated/i;
     return undef;
@@ -707,7 +709,7 @@ sub switch_ikuuu_to_working_node {
     my $benchmark = ikuuu_request('benchmark', {}, 20);
     unless ($benchmark && $benchmark->{success} && ref($benchmark->{candidates}) eq 'ARRAY') {
         $switch_capability = $benchmark ? ($benchmark->{code} // 'benchmark_failed') : 'status_app_unavailable';
-        log_msg('WARN', "iKuuu benchmark failed: $switch_capability");
+        log_msg('WARN', "iKuuu benchmark failed: $switch_capability: " . ($benchmark->{message} // 'status app did not respond'));
         ($testing_index, $testing_total, $candidate_node) = (0, 0, '');
         return 0;
     }

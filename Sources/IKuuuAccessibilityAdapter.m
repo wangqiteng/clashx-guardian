@@ -32,6 +32,29 @@ BOOL IKuuuSnapshotHasServerSemantics(IKuuuAXSnapshot *snapshot) {
     return hasServer && hasSelector;
 }
 
+BOOL IKuuuSnapshotHasNavigation(IKuuuAXSnapshot *snapshot) {
+    NSMutableSet *labels = [NSMutableSet set];
+    for (NSString *text in snapshot.strings) {
+        NSString *first = [text componentsSeparatedByString:@"\n"].firstObject;
+        if (first) [labels addObject:first];
+    }
+    return [labels containsObject:@"主页"] && [labels containsObject:@"服务器"] &&
+           [labels containsObject:@"我的"];
+}
+
+NSString *IKuuuCurrentNodeFromLabels(NSArray<NSString *> *labels) {
+    for (NSString *text in labels) {
+        NSArray *lines = [text componentsSeparatedByString:@"\n"];
+        NSString *first = lines.firstObject;
+        if (![first isEqualToString:@"当前节点"] && ![first containsString:@"选择节点"]) continue;
+        if (lines.count > 1) {
+            NSString *name = [lines[1] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            if (name.length) return name;
+        }
+    }
+    return nil;
+}
+
 NSArray<IKuuuNodeResult *> *IKuuuNodesFromSnapshot(IKuuuAXSnapshot *snapshot, NSError **error) {
     if (!IKuuuSnapshotHasServerSemantics(snapshot)) {
         if (error) *error = IKuuuError(IKuuuAccessibilityErrorIncompatible,
@@ -65,7 +88,9 @@ BOOL IKuuuSelectionMatches(NSString *currentNode, NSString *targetNode) {
     NSString *current = IKuuuNormalizedNodeName(currentNode);
     NSString *target = IKuuuNormalizedNodeName(targetNode);
     if (current.length == 0 || target.length == 0) return NO;
-    return [current isEqualToString:target] || [current hasPrefix:target] || [target hasPrefix:current];
+    return [current isEqualToString:target] ||
+           [current hasPrefix:[target stringByAppendingString:@" |"]] ||
+           [target hasPrefix:[current stringByAppendingString:@" |"]];
 }
 
 static id IKuuuCopyAttribute(AXUIElementRef element, CFStringRef attribute) {
@@ -109,7 +134,8 @@ static void IKuuuCollectElements(AXUIElementRef element, NSInteger depth,
                                  NSMutableArray *elements, NSMutableArray<NSString *> *strings) {
     if (!element || depth > 12 || elements.count >= 1500) return;
     [elements addObject:(__bridge id)element];
-    NSString *text = IKuuuElementText(element);
+    // 父容器会聚合整个列表；只保留控件自己的标签，避免拼出虚假的多行节点名。
+    NSString *text = IKuuuDirectText(element);
     if (text.length) [strings addObject:text];
     for (id rawChild in IKuuuChildren(element)) {
         IKuuuCollectElements((__bridge AXUIElementRef)rawChild, depth + 1, elements, strings);
@@ -147,7 +173,8 @@ static BOOL IKuuuElementFrame(AXUIElementRef element, CGRect *frame) {
     if (!AXIsProcessTrusted()) return IKuuuAccessibilityStatePermissionRequired;
     NSError *error = nil;
     IKuuuAXSnapshot *snapshot = [self inspectWithError:&error];
-    if (!snapshot || !IKuuuSnapshotHasServerSemantics(snapshot)) return IKuuuAccessibilityStateIncompatible;
+    if (!snapshot || (!IKuuuSnapshotHasServerSemantics(snapshot) && !IKuuuSnapshotHasNavigation(snapshot)))
+        return IKuuuAccessibilityStateIncompatible;
     return IKuuuAccessibilityStateReady;
 }
 
@@ -170,6 +197,7 @@ static BOOL IKuuuElementFrame(AXUIElementRef element, CGRect *frame) {
     }
 
     AXUIElementRef appElement = AXUIElementCreateApplication(application.processIdentifier);
+    AXUIElementSetMessagingTimeout(appElement, 1.0);
     NSArray *windows = IKuuuCopyAttribute(appElement, kAXWindowsAttribute);
     CFRelease(appElement);
     if (![windows isKindOfClass:NSArray.class] || windows.count == 0) {
@@ -192,6 +220,38 @@ static BOOL IKuuuElementFrame(AXUIElementRef element, CGRect *frame) {
     return [[IKuuuAXSnapshot alloc] initWithStrings:strings];
 }
 
+// 仅恢复操作需要进入服务器页；日常检查留在用户当前页面。
+- (BOOL)prepareServerPageWithError:(NSError **)error {
+    NSMutableArray *elements = [NSMutableArray array];
+    NSMutableArray *strings = [NSMutableArray array];
+    AXUIElementRef window = [self copyWindowWithElements:elements strings:strings error:error];
+    if (!window) return NO;
+    CFRelease(window);
+    IKuuuAXSnapshot *snapshot = [[IKuuuAXSnapshot alloc] initWithStrings:strings];
+    if (IKuuuSnapshotHasServerSemantics(snapshot)) return YES;
+    if (!IKuuuSnapshotHasNavigation(snapshot)) {
+        if (error) *error = IKuuuError(IKuuuAccessibilityErrorIncompatible, @"无法识别 iKuuu 导航栏，请显示其主窗口后重试");
+        return NO;
+    }
+    NSMutableArray *tabs = [NSMutableArray array];
+    for (id raw in elements) {
+        NSString *label = IKuuuDirectText((__bridge AXUIElementRef)raw);
+        if ([label hasPrefix:@"服务器\n第 "] || [label isEqualToString:@"服务器"])
+            [tabs addObject:raw];
+    }
+    if (tabs.count != 1 || AXUIElementPerformAction((__bridge AXUIElementRef)tabs.firstObject, kAXPressAction) != kAXErrorSuccess) {
+        if (error) *error = IKuuuError(IKuuuAccessibilityErrorActionFailed, @"无法打开 iKuuu 服务器页");
+        return NO;
+    }
+    for (NSInteger attempt = 0; attempt < 12; attempt++) {
+        [NSThread sleepForTimeInterval:0.15];
+        IKuuuAXSnapshot *updated = [self inspectWithError:nil];
+        if (updated && IKuuuSnapshotHasServerSemantics(updated)) return YES;
+    }
+    if (error) *error = IKuuuError(IKuuuAccessibilityErrorTimeout, @"iKuuu 服务器页未就绪");
+    return NO;
+}
+
 - (AXUIElementRef)copyRefreshButtonInWindow:(AXUIElementRef)window elements:(NSArray *)elements {
     CGRect windowFrame = CGRectZero;
     if (!IKuuuElementFrame(window, &windowFrame)) return NULL;
@@ -207,7 +267,7 @@ static BOOL IKuuuElementFrame(AXUIElementRef element, CGRect *frame) {
         BOOL onRight = CGRectGetMidX(frame) >= CGRectGetMinX(windowFrame) + windowFrame.size.width * 0.70;
         if (inToolbar && onRight) [candidates addObject:rawElement];
     }
-    if (candidates.count < 2) return NULL;
+    if (candidates.count != 2) return NULL;
     id rightmost = [candidates sortedArrayUsingComparator:^NSComparisonResult(id left, id right) {
         CGRect leftFrame = CGRectZero, rightFrame = CGRectZero;
         IKuuuElementFrame((__bridge AXUIElementRef)left, &leftFrame);
@@ -220,6 +280,7 @@ static BOOL IKuuuElementFrame(AXUIElementRef element, CGRect *frame) {
 }
 
 - (NSArray<IKuuuNodeResult *> *)benchmarkWithTimeout:(NSTimeInterval)timeout error:(NSError **)error {
+    if (![self prepareServerPageWithError:error]) return nil;
     NSMutableArray *elements = [NSMutableArray array];
     NSMutableArray<NSString *> *strings = [NSMutableArray array];
     AXUIElementRef window = [self copyWindowWithElements:elements strings:strings error:error];
@@ -246,17 +307,22 @@ static BOOL IKuuuElementFrame(AXUIElementRef element, CGRect *frame) {
 
     NSTimeInterval deadline = NSDate.date.timeIntervalSince1970 + MAX(2, timeout);
     NSMutableArray<NSArray<NSNumber *> *> *samples = [NSMutableArray array];
+    NSArray<NSString *> *previousNames = nil;
     NSArray<IKuuuNodeResult *> *latest = nil;
-    [NSThread sleepForTimeInterval:1.0];
+    // 给整轮测速留出时间，避免把刷新前未变化的历史延迟当成本轮结果。
+    [NSThread sleepForTimeInterval:3.0];
     while (NSDate.date.timeIntervalSince1970 < deadline) {
         NSError *inspectError = nil;
         IKuuuAXSnapshot *snapshot = [self inspectWithError:&inspectError];
         NSArray<IKuuuNodeResult *> *nodes = snapshot ? IKuuuNodesFromSnapshot(snapshot, nil) : nil;
         if (nodes.count >= 2) {
             latest = IKuuuRankNodes(nodes, nil);
+            NSArray<NSString *> *names = [latest valueForKey:@"name"];
+            if (previousNames && ![previousNames isEqual:names]) [samples removeAllObjects];
+            previousNames = names;
             [samples addObject:[latest valueForKey:@"delayMilliseconds"]];
             if (IKuuuDelaySamplesAreStable(samples, 2)) return latest;
-        }
+        } else { [samples removeAllObjects]; previousNames = nil; }
         [NSThread sleepForTimeInterval:0.5];
     }
     if (error) *error = IKuuuError(IKuuuAccessibilityErrorTimeout, @"等待 iKuuu 测速结果超时");
@@ -269,6 +335,8 @@ static BOOL IKuuuElementFrame(AXUIElementRef element, CGRect *frame) {
     AXUIElementRef window = [self copyWindowWithElements:elements strings:strings error:error];
     if (!window) return nil;
     CFRelease(window);
+    NSString *homeNode = IKuuuCurrentNodeFromLabels(strings);
+    if (homeNode) return homeNode;
     for (id rawElement in elements) {
         AXUIElementRef element = (__bridge AXUIElementRef)rawElement;
         NSString *role = IKuuuCopyAttribute(element, kAXRoleAttribute);
@@ -285,6 +353,7 @@ static BOOL IKuuuElementFrame(AXUIElementRef element, CGRect *frame) {
 }
 
 - (BOOL)selectNodeNamed:(NSString *)name error:(NSError **)error {
+    if (![self prepareServerPageWithError:error]) return NO;
     NSMutableArray *elements = [NSMutableArray array];
     NSMutableArray<NSString *> *strings = [NSMutableArray array];
     AXUIElementRef window = [self copyWindowWithElements:elements strings:strings error:error];

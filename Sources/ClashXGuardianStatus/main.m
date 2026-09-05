@@ -802,9 +802,9 @@ static int RunIKuuuReadOnlySelfTest(void) {
     IKuuuAXSnapshot *snapshot = [adapter inspectWithError:&error];
     NSArray<IKuuuNodeResult *> *nodes = snapshot ? IKuuuNodesFromSnapshot(snapshot, &error) : nil;
     NSString *current = [adapter currentNodeWithError:nil] ?: @"unknown";
-    if (nodes.count < 2) {
+    if ([current isEqualToString:@"unknown"]) {
         fprintf(stderr, "iKuuu read-only self-test failed: %s\n",
-                (error.localizedDescription ?: @"insufficient nodes").UTF8String);
+                (error.localizedDescription ?: @"current node unavailable").UTF8String);
         return 1;
     }
     printf("ikuuu_self_test_ok=1 client=ikuuu nodes=%ld current=%s action=none\n",
