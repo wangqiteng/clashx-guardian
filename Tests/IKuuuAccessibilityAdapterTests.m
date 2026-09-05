@@ -54,6 +54,18 @@ static void TestSelectionConfirmationAllowsHeaderShortName(void) {
 
 int main(void) {
     @autoreleasepool {
+        NSArray *toolbarFrames = @[
+            [NSValue valueWithRect:NSMakeRect(670, 8, 32, 32)],
+            [NSValue valueWithRect:NSMakeRect(710, 8, 32, 32)],
+            [NSValue valueWithRect:NSMakeRect(687, 82, 32, 32)],
+            [NSValue valueWithRect:NSMakeRect(686, 536, 48, 48)]
+        ];
+        NSRect window = NSMakeRect(0, 0, 750, 600);
+        NSCAssert(IKuuuBenchmarkFrameIndex(toolbarFrames, window) == 3, @"必须点击实测确认的右下角测速按钮");
+        NSCAssert(IKuuuBenchmarkFrameIndex(@[toolbarFrames[0]], window) == NSNotFound, @"顶部刷新按钮不能当测速");
+        NSCAssert(IKuuuBenchmarkFrameIndex(@[toolbarFrames[3], toolbarFrames[3]], window) == NSNotFound, @"有多义按钮不可点击");
+        NSString *preferred = IKuuuPreferredText(@[@"日本Y01", @"日本Y01\n99 ms"]);
+        NSCAssert([preferred isEqualToString:@"日本Y01\n99 ms"], @"同一控件的标题和详细描述不能重复拼接");
         NSArray *deduplicated = IKuuuParseNodeLabels(@[@"节点 A\n42 ms", @"节点 A\n42 ms", @"容器\n节点 B\n43 ms"]);
         NSCAssert(deduplicated.count == 1, @"容器聚合文本和重复标签不能产生虚假候选");
         IKuuuAXSnapshot *home = [[IKuuuAXSnapshot alloc] initWithStrings:@[

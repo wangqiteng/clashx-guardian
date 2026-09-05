@@ -802,7 +802,7 @@ static int RunIKuuuReadOnlySelfTest(void) {
     IKuuuAXSnapshot *snapshot = [adapter inspectWithError:&error];
     NSArray<IKuuuNodeResult *> *nodes = snapshot ? IKuuuNodesFromSnapshot(snapshot, &error) : nil;
     NSString *current = [adapter currentNodeWithError:nil] ?: @"unknown";
-    if ([current isEqualToString:@"unknown"]) {
+    if ([current isEqualToString:@"unknown"] || (IKuuuSnapshotHasServerSemantics(snapshot) && nodes.count == 0)) {
         fprintf(stderr, "iKuuu read-only self-test failed: %s\n",
                 (error.localizedDescription ?: @"current node unavailable").UTF8String);
         return 1;
@@ -817,6 +817,16 @@ int main(int argc, const char *argv[]) {
         if (argc == 3 && strcmp(argv[1], "--self-test") == 0) return RunSelfTest([NSString stringWithUTF8String:argv[2]]);
         if (argc == 3 && strcmp(argv[1], "--render-app-icon") == 0) return WriteApplicationIcon([NSString stringWithUTF8String:argv[2]]);
         if (argc == 2 && strcmp(argv[1], "--ikuuu-self-test") == 0) return RunIKuuuReadOnlySelfTest();
+        if (argc == 2 && strcmp(argv[1], "--ikuuu-diagnose") == 0) {
+            IKuuuAccessibilityAdapter *adapter = [IKuuuAccessibilityAdapter new];
+            NSError *error = nil;
+            IKuuuAXSnapshot *snapshot = [adapter inspectWithError:&error];
+            NSDictionary *report = @{@"state": @(adapter.state), @"error": error.localizedDescription ?: @"",
+                                     @"labels": snapshot.strings ?: @[]};
+            NSData *data = [NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil];
+            fwrite(data.bytes, 1, data.length, stdout);
+            return snapshot ? 0 : 1;
+        }
         NSApplication *app = NSApplication.sharedApplication;
         GuardianAppDelegate *delegate = [GuardianAppDelegate new];
         app.delegate = delegate;

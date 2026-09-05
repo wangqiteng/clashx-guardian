@@ -32,6 +32,8 @@ NSArray<IKuuuNodeResult *> * _Nullable IKuuuNodesFromSnapshot(IKuuuAXSnapshot *s
                                                                NSError **error);
 BOOL IKuuuSnapshotHasServerSemantics(IKuuuAXSnapshot *snapshot);
 BOOL IKuuuSnapshotHasNavigation(IKuuuAXSnapshot *snapshot);
+NSInteger IKuuuBenchmarkFrameIndex(NSArray<NSValue *> *frames, NSRect window);
+NSString *IKuuuPreferredText(NSArray<NSString *> *values);
 NSString * _Nullable IKuuuCurrentNodeFromLabels(NSArray<NSString *> *labels);
 BOOL IKuuuDelaySamplesAreStable(NSArray<NSArray<NSNumber *> *> *samples, NSInteger requiredCount);
 BOOL IKuuuSelectionMatches(NSString *currentNode, NSString *targetNode);

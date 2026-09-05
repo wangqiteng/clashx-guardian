@@ -42,6 +42,27 @@ BOOL IKuuuSnapshotHasNavigation(IKuuuAXSnapshot *snapshot) {
            [labels containsObject:@"我的"];
 }
 
+NSInteger IKuuuBenchmarkFrameIndex(NSArray<NSValue *> *frames, NSRect window) {
+    NSMutableArray<NSNumber *> *matches = [NSMutableArray array];
+    for (NSUInteger i = 0; i < frames.count; i++) {
+        NSRect frame = frames[i].rectValue;
+        if (NSContainsRect(window, frame) && frame.size.width >= 36 && frame.size.width <= 72 &&
+            frame.size.height >= 36 && frame.size.height <= 72 &&
+            NSMidX(frame) >= NSMinX(window) + window.size.width * 0.85 &&
+            NSMidY(frame) >= NSMinY(window) + window.size.height * 0.75)
+            [matches addObject:@(i)];
+    }
+    // 当前版本右下角唯一的悬浮按钮触发全节点测速，顶部圆形箭头是刷新。
+    return matches.count == 1 ? matches.firstObject.integerValue : NSNotFound;
+}
+
+NSString *IKuuuPreferredText(NSArray<NSString *> *values) {
+    NSString *result = @"";
+    // AXTitle、AXValue、AXDescription 常是同一标签的不同详略版本，不可串接为节点名。
+    for (NSString *value in values) if (value.length > result.length) result = value;
+    return result;
+}
+
 NSString *IKuuuCurrentNodeFromLabels(NSArray<NSString *> *labels) {
     for (NSString *text in labels) {
         NSArray *lines = [text componentsSeparatedByString:@"\n"];
@@ -115,7 +136,7 @@ static NSString *IKuuuDirectText(AXUIElementRef element) {
             if (text.length) [parts addObject:text];
         }
     }
-    return [parts.array componentsJoinedByString:@"\n"];
+    return IKuuuPreferredText(parts.array);
 }
 
 static NSString *IKuuuElementText(AXUIElementRef element) {
@@ -132,7 +153,8 @@ static NSString *IKuuuElementText(AXUIElementRef element) {
 
 static void IKuuuCollectElements(AXUIElementRef element, NSInteger depth,
                                  NSMutableArray *elements, NSMutableArray<NSString *> *strings) {
-    if (!element || depth > 12 || elements.count >= 1500) return;
+    // Flutter 原始 AX 树包含多层不可见容器，节点卡片比可视化工具显示的树更深。
+    if (!element || depth > 64 || elements.count >= 3000) return;
     [elements addObject:(__bridge id)element];
     // 父容器会聚合整个列表；只保留控件自己的标签，避免拼出虚假的多行节点名。
     NSString *text = IKuuuDirectText(element);
@@ -198,6 +220,10 @@ static BOOL IKuuuElementFrame(AXUIElementRef element, CGRect *frame) {
 
     AXUIElementRef appElement = AXUIElementCreateApplication(application.processIdentifier);
     AXUIElementSetMessagingTimeout(appElement, 1.0);
+    // Flutter 按辅助功能客户端需求生成语义树；先请求增强界面，避免后台首次读取为空。
+    Boolean settable = false;
+    if (AXUIElementIsAttributeSettable(appElement, CFSTR("AXEnhancedUserInterface"), &settable) == kAXErrorSuccess && settable)
+        AXUIElementSetAttributeValue(appElement, CFSTR("AXEnhancedUserInterface"), kCFBooleanTrue);
     NSArray *windows = IKuuuCopyAttribute(appElement, kAXWindowsAttribute);
     CFRelease(appElement);
     if (![windows isKindOfClass:NSArray.class] || windows.count == 0) {
@@ -207,7 +233,16 @@ static BOOL IKuuuElementFrame(AXUIElementRef element, CGRect *frame) {
 
     AXUIElementRef window = (__bridge AXUIElementRef)windows.firstObject;
     CFRetain(window);
-    if (elements && strings) IKuuuCollectElements(window, 0, elements, strings);
+    if (elements && strings) {
+        for (NSInteger attempt = 0; attempt < 4; attempt++) {
+            [elements removeAllObjects];
+            [strings removeAllObjects];
+            IKuuuCollectElements(window, 0, elements, strings);
+            IKuuuAXSnapshot *snapshot = [[IKuuuAXSnapshot alloc] initWithStrings:strings];
+            if (IKuuuSnapshotHasNavigation(snapshot) || IKuuuSnapshotHasServerSemantics(snapshot)) break;
+            if (attempt < 3) [NSThread sleepForTimeInterval:0.15];
+        }
+    }
     return window;
 }
 
@@ -256,6 +291,7 @@ static BOOL IKuuuElementFrame(AXUIElementRef element, CGRect *frame) {
     CGRect windowFrame = CGRectZero;
     if (!IKuuuElementFrame(window, &windowFrame)) return NULL;
     NSMutableArray *candidates = [NSMutableArray array];
+    NSMutableArray<NSValue *> *frames = [NSMutableArray array];
     for (id rawElement in elements) {
         AXUIElementRef element = (__bridge AXUIElementRef)rawElement;
         NSString *role = IKuuuCopyAttribute(element, kAXRoleAttribute);
@@ -263,17 +299,12 @@ static BOOL IKuuuElementFrame(AXUIElementRef element, CGRect *frame) {
         if (IKuuuElementText(element).length) continue;
         CGRect frame = CGRectZero;
         if (!IKuuuElementFrame(element, &frame)) continue;
-        BOOL inToolbar = CGRectGetMidY(frame) <= CGRectGetMinY(windowFrame) + windowFrame.size.height * 0.18;
-        BOOL onRight = CGRectGetMidX(frame) >= CGRectGetMinX(windowFrame) + windowFrame.size.width * 0.70;
-        if (inToolbar && onRight) [candidates addObject:rawElement];
+        [candidates addObject:rawElement];
+        [frames addObject:[NSValue valueWithRect:NSRectFromCGRect(frame)]];
     }
-    if (candidates.count != 2) return NULL;
-    id rightmost = [candidates sortedArrayUsingComparator:^NSComparisonResult(id left, id right) {
-        CGRect leftFrame = CGRectZero, rightFrame = CGRectZero;
-        IKuuuElementFrame((__bridge AXUIElementRef)left, &leftFrame);
-        IKuuuElementFrame((__bridge AXUIElementRef)right, &rightFrame);
-        return CGRectGetMidX(leftFrame) > CGRectGetMidX(rightFrame) ? NSOrderedAscending : NSOrderedDescending;
-    }].firstObject;
+    NSInteger index = IKuuuBenchmarkFrameIndex(frames, NSRectFromCGRect(windowFrame));
+    if (index == NSNotFound) return NULL;
+    id rightmost = candidates[(NSUInteger)index];
     AXUIElementRef result = (__bridge AXUIElementRef)rightmost;
     CFRetain(result);
     return result;
