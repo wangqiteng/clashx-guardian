@@ -62,7 +62,7 @@ my $group              = $group_setting =~ /^auto$/i ? 'Proxy' : $group_setting;
 my $secret             = $cfg{CONTROLLER_SECRET} // '';
 $secret = clashx_saved_secret() if $secret =~ /^(?:auto)?$/i;
 my $require_sys_proxy  = bool_cfg('REQUIRE_SYSTEM_PROXY', 1);
-my $exclude_pattern    = $cfg{EXCLUDE_PATTERN} || '^(?:DIRECT|REJECT|PASS)$';
+my $exclude_pattern    = $cfg{EXCLUDE_PATTERN} || '(?:DIRECT|REJECT|PASS|台湾|台灣|台北|Taiwan|Taipei)';
 my $exclude_re         = eval { qr/$exclude_pattern/i };
 die "Invalid EXCLUDE_PATTERN: $@\n" if $@;
 
@@ -923,6 +923,8 @@ sub run_internal_self_test {
         '/bin/sh', '-c', 'echo expected-noise >&2; exit 17');
     die "quiet command runner leaked or lost exit status\n"
         unless defined($quiet_output) && $quiet_output eq '' && $quiet_status == 17;
+    die "Taiwan nodes must be excluded\n"
+        unless '🇹🇼 台湾Y01' =~ $exclude_re && '🇸🇬 新加坡Y02' !~ $exclude_re;
     $candidate_cursor = 0;
     $node_stats = {
         stable => { successes => 3, failures => 0, lastSuccessAt => int(time), averageDelay => 450 },

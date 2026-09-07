@@ -48,6 +48,10 @@ sed -i '' 's/^FAILURE_SECONDS=30$/FAILURE_SECONDS=20/' "$install_dir/config.conf
 sed -i '' 's|^PROXY_URL=http://127.0.0.1:7890$|PROXY_URL=auto|' "$install_dir/config.conf"
 sed -i '' 's|^CONTROLLER_URL=http://127.0.0.1:9090$|CONTROLLER_URL=auto|' "$install_dir/config.conf"
 sed -i '' 's/^PROXY_GROUP=Proxy$/PROXY_GROUP=auto/' "$install_dir/config.conf"
+# 仅迁移旧版默认排除规则；用户主动设置的自定义规则保持不变。
+if /usr/bin/grep -qF 'EXCLUDE_PATTERN=^(?:DIRECT|REJECT|PASS)$' "$install_dir/config.conf"; then
+  /usr/bin/perl -pi -e 's/^EXCLUDE_PATTERN=.*$/EXCLUDE_PATTERN=(?:DIRECT|REJECT|PASS|台湾|台灣|台北|Taiwan|Taipei)/' "$install_dir/config.conf"
+fi
 # 新版在任意网络上工作，清理已不再生效的旧门控配置。
 sed -i '' '/^TARGET_SSIDS=/d' "$install_dir/config.conf"
 sed -i '' '/^REQUIRE_CODEX_RUNNING=/d' "$install_dir/config.conf"

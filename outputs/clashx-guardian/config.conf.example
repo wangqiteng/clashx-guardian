@@ -46,7 +46,7 @@ COMMON_FAILURE_LIMIT=2
 POST_SWITCH_WAIT=2
 
 # 不允许自动选择这些特殊路由。可改成 Perl 正则表达式。
-EXCLUDE_PATTERN=^(?:DIRECT|REJECT|PASS)$
+EXCLUDE_PATTERN=(?:DIRECT|REJECT|PASS|台湾|台灣|台北|Taiwan|Taipei)
 
 LOG_FILE=~/Library/Logs/ClashXGuardian.log
 LOCK_FILE=~/Library/Caches/ClashXGuardian.lock
