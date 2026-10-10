@@ -1,5 +1,7 @@
 # ClashX Guardian
 
+Windows 首版位于 [`Windows/`](Windows/README.md)：提供 iKuuu 官方客户端的网络检测、托盘控制和只读兼容性诊断；**官方 Windows UI 自动测速/切换尚未适配**。可选支持本机 Clash/Mihomo Controller 模式，不影响下述 macOS 版本。
+
 ClashX Guardian 是一个面向 macOS、ClashX Pro 与 iKuuuVPN 的轻量网络守护工具，目标是在 Codex 工作期间检测 OpenAI 线路故障，并自动切换到真实可用的代理节点。
 
 ## 主要能力

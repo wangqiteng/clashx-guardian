@@ -2,6 +2,8 @@ build/
 dist/
 .DS_Store
 work/
+**/bin/
+**/obj/
 outputs/*.zip
 outputs/*.sha256
 outputs/**/*.app/
