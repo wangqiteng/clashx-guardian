@@ -50,7 +50,7 @@ public sealed class ClashController : IController, IDisposable
             await gate.WaitAsync(token);
             try
             {
-                var path = $"proxies/{Uri.EscapeDataString(name)}/delay?timeout=2500&url={Uri.EscapeDataString("https://chatgpt.com/")}";
+                var path = $"proxies/{Uri.EscapeDataString(name)}/delay?timeout=2500&url={Uri.EscapeDataString("https://www.gstatic.com/generate_204")}";
                 using var response = await http.GetAsync(path, token);
                 response.EnsureSuccessStatusCode();
                 using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));

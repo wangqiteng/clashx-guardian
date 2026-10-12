@@ -12,6 +12,7 @@ public sealed record Settings
     public string ControllerUrl { get; init; } = "http://127.0.0.1:9090";
     public string Group { get; init; } = "";
     public bool AllowSwitch { get; init; }
+    public bool AllowUISwitch { get; init; } = true;
 
     public void Validate()
     {

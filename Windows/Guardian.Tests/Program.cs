@@ -4,6 +4,19 @@ using Guardian.Core;
 
 int passed = 0;
 void Check(bool condition, string name) { if (!condition) throw new Exception("FAIL: " + name); passed++; Console.WriteLine("PASS: " + name); }
+var eventTime = DateTimeOffset.Parse("2026-10-12T10:00:00+08:00");
+var history = new RecentEvents();
+foreach (var text in new[] { "已启动", "线路正常", "线路异常", "线路恢复" }) history.Record(text, eventTime = eventTime.AddMinutes(1));
+Check(history.NewestFirst.Select(e => e.Message).SequenceEqual(new[] { "线路恢复", "线路异常", "线路正常" }), "recent events retain exactly three entries newest first");
+Check(!history.Record("线路恢复", eventTime.AddMinutes(1)) && history.NewestFirst[0].Timestamp == eventTime, "repeated polls do not replace the last event or its timestamp");
+var savedEvents = System.Text.Json.JsonSerializer.Serialize(history.NewestFirst);
+var restoredEvents = new RecentEvents(System.Text.Json.JsonSerializer.Deserialize<RecentEvent[]>(savedEvents));
+Check(restoredEvents.NewestFirst.SequenceEqual(history.NewestFirst), "recent events survive a serialized restart");
+Check(RecentEvents.RelativeTime(eventTime, eventTime.AddSeconds(10)) == "刚刚" && RecentEvents.RelativeTime(eventTime, eventTime.AddMinutes(2)) == "2 分钟前", "event age renders relative to current time");
+Check(NativeLabels.Parse("🇯🇵 日本Y01 | IEPL\n123 ms") is { Name: "🇯🇵 日本Y01 | IEPL", Delay: 123 }, "parse official Flutter node label and latency");
+Check(NativeLabels.Parse("🇺🇲 美国Y01 | IEPL | x1.5 超时") is { Name: "🇺🇲 美国Y01 | IEPL | x1.5", Delay: null }, "timed-out nodes remain candidates for actual connectivity verification");
+Check(NativeLabels.Parse("不使用节点 44 ms") == null && NativeLabels.Parse("🔰 选择节点") == null, "never select direct route or group header as a node");
+Check(NativeLabels.Parse("🇹🇼 台湾Y01 40 ms") == null, "native client retains excluded-region policy");
 foreach (var name in new[] { "台湾 Y01", "台灣", "臺北", "🇹🇼 Y02", "Taipei 1", "Taiwan", "TW-01", "DIRECT", "REJECT" }) Check(!Policy.IsAllowed(name), "exclude " + name);
 Check(Policy.IsAllowed("日本 Y01 | IEPL"), "allow Japan");
 foreach (var address in new[] { "http://192.168.1.1:9090", "http://example.com", "http://127.0.0.1:9090/api", "http://a:b@127.0.0.1:9090", "http://127.0.0.1:9090?secret=x" })
@@ -84,7 +97,26 @@ using (var controller = new ClashController("http://127.0.0.1:9090", "test-only-
     await controller.SelectAsync("Proxy", "Japan / 01", default);
     Check(handler.SawPut && handler.SawEscapedName && handler.SawAuth, "controller routes, escaping, authentication and switch body");
 }
+using (var network = new Guardian.Windows.NetworkProbe())
+{
+    var transport = new ProbeHandler();
+    // Inject a deterministic HTTP transport into the existing probe without touching user registry settings.
+    typeof(Guardian.Windows.NetworkProbe).GetField("client", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+        .SetValue(network, new HttpClient(transport));
+    var probeResult = await network.RunAsync(default);
+    Check(probeResult.Healthy, "Cloudflare challenge on ChatGPT must not mask reachable OpenAI API and public network");
+    Check(transport.AllClosed, "probe connections cannot remain pooled across node switches");
+}
 Console.WriteLine($"{passed} checks passed");
+if (args.Contains("--live-probe"))
+{
+    using var live = new Guardian.Windows.NetworkProbe();
+    live.RefreshRoute();
+    var actual = await live.RunAsync(default);
+    Console.WriteLine("LIVE route: " + live.Route);
+    Console.WriteLine("LIVE " + actual.Detail);
+    Check(actual.Healthy, "actual Windows system proxy reaches OpenAI API and public network");
+}
 
 sealed class FakeController : IController
 {
@@ -120,11 +152,25 @@ sealed class MockHandler : HttpMessageHandler
             SawPut = (await request.Content!.ReadAsStringAsync(cancellationToken)).Contains("Japan / 01");
             return new(HttpStatusCode.NoContent);
         }
+        if (path.EndsWith("/delay") && request.RequestUri!.Query.Contains(Uri.EscapeDataString("https://chatgpt.com/")))
+            return new(HttpStatusCode.Forbidden);
         var json = path.EndsWith("/delay") ? (path.Contains("Singapore") ? "{\"delay\":25}" : "{\"delay\":50}") : """
             {"proxies":{"Proxy":{"type":"Selector","now":"Japan / 01","all":["Japan / 01","Singapore","台湾","Auto","DIRECT"]},
             "Japan / 01":{"type":"Shadowsocks"},"Singapore":{"type":"Vmess"},"台湾":{"type":"Shadowsocks"},
             "Auto":{"type":"URLTest","all":["Singapore"]},"DIRECT":{"type":"Direct"}}}
             """;
         return new(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+    }
+}
+
+sealed class ProbeHandler : HttpMessageHandler
+{
+    public bool AllClosed = true;
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+    {
+        if (request.Headers.ConnectionClose != true) AllClosed = false;
+        var code = request.RequestUri!.Host == "chatgpt.com" ? HttpStatusCode.Forbidden :
+            request.RequestUri.Host == "api.openai.com" ? HttpStatusCode.Unauthorized : HttpStatusCode.NoContent;
+        return Task.FromResult(new HttpResponseMessage(code));
     }
 }

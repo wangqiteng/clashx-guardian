@@ -51,7 +51,7 @@ internal static class Diagnostics
             }
         }
         File.WriteAllText(Path.Combine(Storage.DirectoryPath, "compatibility.json"),
-            JsonSerializer.Serialize(new { guardianVersion = "0.1.0-preview", os = Environment.OSVersion.VersionString,
+            JsonSerializer.Serialize(new { guardianVersion = "0.1.4", os = Environment.OSVersion.VersionString,
                 architecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(), clients }, new JsonSerializerOptions { WriteIndented = true }));
     }
 }

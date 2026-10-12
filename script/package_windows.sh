@@ -4,7 +4,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOTNET_BIN="${DOTNET:-dotnet}"
 RID="${1:-win-x64}"
 case "$RID" in win-x64|win-arm64) ;; *) echo "Unsupported runtime: $RID" >&2; exit 2 ;; esac
-VERSION="0.1.0-preview"
+VERSION="0.1.4"
 PACKAGE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/ikuuu-guardian-win.XXXXXX")"
 trap 'rm -rf "$PACKAGE_ROOT"' EXIT
 PACKAGE_DIR="$PACKAGE_ROOT/IKuuu-Guardian-$VERSION-$RID"

@@ -47,9 +47,10 @@ public sealed class Recovery(IController controller, Func<CancellationToken, Tas
                         return new(false, false, "验证期间节点被外部修改，停止自动操作");
                     }
                     success = true;
-                    return new(true, true, $"已切换并验证：{candidate.Name}（{candidate.Milliseconds} ms）");
+                    var measurement = candidate.Milliseconds == int.MaxValue ? "实际连通性验证通过；客户端延迟未知" : candidate.Milliseconds + " ms";
+                    return new(true, true, $"已切换并验证：{candidate.Name}（{measurement}）");
                 }
-                log("候选节点验证失败，尝试下一个低延迟节点");
+                log("候选节点验证失败：" + candidate.Name + "；" + verified.Detail + "。尝试下一个候选节点");
             }
             return new(false, false, "候选节点均未通过验证，可能是站点或公共线路故障");
         }
@@ -61,7 +62,10 @@ public sealed class Recovery(IController controller, Func<CancellationToken, Tas
                 if (!Policy.IsAllowed(initial.Selected)) log("原节点属于排除地区，不自动切回；保留最后候选，请手动选择");
                 else
                 {
-                    using var rollback = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                    // Native UI reads and selection acknowledgements span several
+                    // child processes; eight seconds can expire after selection
+                    // succeeded but before its final acknowledgement is read.
+                    using var rollback = new CancellationTokenSource(TimeSpan.FromSeconds(20));
                     try
                     {
                         var current = await controller.SnapshotAsync(group, rollback.Token);

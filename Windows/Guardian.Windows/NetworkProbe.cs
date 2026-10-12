@@ -62,13 +62,13 @@ internal sealed class NetworkProbe : IDisposable
     public async Task<ProbeResult> RunAsync(CancellationToken token)
     {
         if (client == null) throw new InvalidOperationException("检测路径尚未初始化");
-        var primary = GetAsync("https://chatgpt.com/backend-api/codex", token);
+        var primary = GetAsync("https://api.openai.com/v1/models", token);
         var google = GetAsync("https://www.gstatic.com/generate_204", token);
         var cloudflare = GetAsync("https://www.cloudflare.com/cdn-cgi/trace", token);
         await Task.WhenAll(primary, google, cloudflare);
         token.ThrowIfCancellationRequested();
         return new(Policy.PrimaryStatus(primary.Result), Policy.PublicStatus(google.Result) || Policy.PublicStatus(cloudflare.Result),
-            $"OpenAI HTTP {primary.Result}；外网 HTTP {google.Result}/{cloudflare.Result}（0 表示连接失败）");
+            $"OpenAI API HTTP {primary.Result}；外网 HTTP {google.Result}/{cloudflare.Result}（0 表示连接失败）");
     }
 
     private async Task<int> GetAsync(string url, CancellationToken token)
@@ -76,6 +76,9 @@ internal sealed class NetworkProbe : IDisposable
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            // A fresh connection must verify the newly selected node, rather
+            // than reusing a tunnel established through the previous node.
+            request.Headers.ConnectionClose = true;
             using var response = await client!.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
             return (int)response.StatusCode;
         }

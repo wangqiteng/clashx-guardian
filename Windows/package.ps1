@@ -1,7 +1,7 @@
 param([ValidateSet('win-x64','win-arm64')][string]$Runtime = 'win-x64')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
-$version = '0.1.0-preview'
+$version = '0.1.4'
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ('ikuuu-guardian-' + [guid]::NewGuid())
 $packageDirectory = Join-Path $temporaryRoot "IKuuu-Guardian-$version-$Runtime"
 try {
