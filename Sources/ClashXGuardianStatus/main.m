@@ -5,6 +5,7 @@
 #import <signal.h>
 #import "GuardianStartPolicy.h"
 #import "IKuuuRequestCoordinator.h"
+#import "GuardianCodexUsage.h"
 
 static NSString *const GuardianBundleID = @"com.local.ClashXGuardianStatus";
 
@@ -254,6 +255,12 @@ static int WriteApplicationIcon(NSString *path) {
 @property(nonatomic) BOOL authorizationPromptScheduled;
 @property(nonatomic, copy) NSString *guardianOperationLabel;
 @property(nonatomic, strong) NSURL *diagnosticLogURL;
+@property(nonatomic, strong) NSTimer *usageTimer;
+@property(nonatomic, strong) NSDictionary *usage;
+@property(nonatomic, strong) NSDate *usageUpdatedAt;
+@property(nonatomic, strong) NSMenuItem *usageItem, *usageUpdatedItem, *usageToggleItem, *usageRefreshItem;
+@property(nonatomic, strong) NSArray<NSMenuItem *> *usageWindowItems;
+@property(nonatomic) BOOL usageLoading;
 @end
 
 @implementation GuardianAppDelegate
@@ -276,6 +283,10 @@ static int WriteApplicationIcon(NSString *path) {
     freopen(self.diagnosticLogURL.fileSystemRepresentation, "a", stderr);
     setvbuf(stderr, NULL, _IOLBF, 0);
     [self configureMenu];
+    [self refreshCodexUsage:nil];
+    self.usageTimer = [NSTimer timerWithTimeInterval:180 target:self selector:@selector(refreshCodexUsage:) userInfo:nil repeats:YES];
+    self.usageTimer.tolerance = 30;
+    [NSRunLoop.mainRunLoop addTimer:self.usageTimer forMode:NSRunLoopCommonModes];
     [self refreshStatus];
     [self ensureGuardianRunning:NO];
     [self requestNotificationPermission];
@@ -284,7 +295,9 @@ static int WriteApplicationIcon(NSString *path) {
     os_log_info(OS_LOG_DEFAULT, "ClashX Guardian status app started");
 }
 
-- (void)applicationWillTerminate:(NSNotification *)notification { (void)notification; [self.timer invalidate]; }
+- (void)applicationWillTerminate:(NSNotification *)notification {
+    (void)notification; [self.timer invalidate]; [self.usageTimer invalidate]; GuardianCancelCodexUsage();
+}
 - (void)menuWillOpen:(NSMenu *)menu { (void)menu; [self refreshStatus]; }
 
 - (NSMenuItem *)infoItem:(NSString *)title {
@@ -328,6 +341,17 @@ static int WriteApplicationIcon(NSString *path) {
     self.ikuuuPermissionItem = [self actionItem:@"授权 iKuuu 自动保护"
                                        selector:@selector(authorizeIKuuu:) key:@""];
     [self.menu addItem:self.ikuuuPermissionItem];
+    [self.menu addItem:NSMenuItem.separatorItem];
+    self.usageItem = [self infoItem:@"Codex 剩余额度：读取中…"];
+    self.usageUpdatedItem = [self infoItem:@"额度更新时间：—"];
+    [self.menu addItem:self.usageItem];
+    self.usageWindowItems = @[[self infoItem:@"—"], [self infoItem:@"—"]];
+    for (NSMenuItem *item in self.usageWindowItems) { item.hidden = YES; [self.menu addItem:item]; }
+    [self.menu addItem:self.usageUpdatedItem];
+    self.usageRefreshItem = [self actionItem:@"刷新 Codex 额度" selector:@selector(refreshCodexUsage:) key:@""];
+    [self.menu addItem:self.usageRefreshItem];
+    self.usageToggleItem = [self actionItem:@"菜单栏显示剩余额度" selector:@selector(toggleCodexUsage:) key:@""];
+    [self.menu addItem:self.usageToggleItem];
     [self.menu addItem:NSMenuItem.separatorItem];
     [self.menu addItem:[self actionItem:@"打开配置" selector:@selector(openConfig:) key:@""]];
     [self.menu addItem:[self actionItem:@"打开日志" selector:@selector(openLog:) key:@""]];
@@ -482,12 +506,61 @@ static int WriteApplicationIcon(NSString *path) {
 - (void)updateButton:(GuardianAppearance)appearance tooltip:(NSString *)tooltip {
     NSStatusBarButton *button = self.statusItem.button;
     if (!button) return;
-    button.title = @"";
+    BOOL showUsage = ![NSUserDefaults.standardUserDefaults boolForKey:@"HideCodexUsage"];
+    BOOL fresh = self.usageUpdatedAt && -self.usageUpdatedAt.timeIntervalSinceNow < 360 && self.usage[@"remaining"];
+    for (NSDictionary *window in self.usage[@"windows"])
+        if ([window[@"reset"] doubleValue] <= NSDate.date.timeIntervalSince1970) fresh = NO;
+    NSString *percent = fresh ? [NSString stringWithFormat:@"%@%%", self.usage[@"remaining"]] : @"--";
+    self.statusItem.length = showUsage ? NSVariableStatusItemLength : NSSquareStatusItemLength;
+    button.font = [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightMedium];
+    button.title = showUsage ? [@" " stringByAppendingString:percent] : @"";
     button.image = GuardianStatusImage(appearance);
-    button.imagePosition = NSImageOnly;
+    button.imagePosition = showUsage ? NSImageLeft : NSImageOnly;
     button.contentTintColor = nil;
-    button.toolTip = tooltip;
+    button.toolTip = [tooltip stringByAppendingFormat:@"\nCodex 剩余额度：%@（各有效窗口中较低值）", percent];
+    self.usageToggleItem.state = showUsage ? NSControlStateValueOn : NSControlStateValueOff;
+    self.usageItem.title = [NSString stringWithFormat:@"Codex 剩余额度：%@%@", percent, fresh ? @"（取较低窗口）" : @""];
+    NSDateFormatter *formatter = [NSDateFormatter new];
+    formatter.dateFormat = @"MM-dd HH:mm";
+    NSArray *windows = fresh ? self.usage[@"windows"] : @[];
+    for (NSUInteger index = 0; index < self.usageWindowItems.count; index++) {
+        NSMenuItem *item = self.usageWindowItems[index]; item.hidden = index >= windows.count;
+        if (item.hidden) continue;
+        NSDictionary *window = windows[index];
+        double minutes = [window[@"minutes"] doubleValue];
+        NSString *duration = minutes >= 1440 ? [NSString stringWithFormat:@"%g 天", minutes/1440]
+            : minutes >= 60 ? [NSString stringWithFormat:@"%g 小时", minutes/60] : [NSString stringWithFormat:@"%g 分钟", minutes];
+        item.title = [NSString stringWithFormat:@"%@窗口：剩余 %@%% · %@ 重置", duration, window[@"remaining"],
+            [formatter stringFromDate:[NSDate dateWithTimeIntervalSince1970:[window[@"reset"] doubleValue]]]];
+    }
+    self.usageRefreshItem.enabled = !self.usageLoading;
+    self.usageUpdatedItem.title = self.usageLoading ? @"额度：正在后台刷新…" : self.usage[@"error"]
+        ?: (self.usageUpdatedAt ? [@"额度更新时间：" stringByAppendingString:[formatter stringFromDate:self.usageUpdatedAt]] : @"额度尚未读取");
     [button setAccessibilityLabel:[NSString stringWithFormat:@"ClashX Guardian：%@", AppearanceLabel(appearance)]];
+}
+
+// 网络守护与额度读取独立运行；只在后台轮询，避免阻塞菜单和频繁拉起 CLI。
+- (void)refreshCodexUsage:(id)sender {
+    (void)sender;
+    if (self.usageLoading) return;
+    self.usageLoading = YES;
+    self.usageRefreshItem.enabled = NO;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSDictionary *result = GuardianReadCodexUsage();
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.usage = result; self.usageLoading = NO;
+            self.usageUpdatedAt = result[@"remaining"] ? NSDate.date : nil;
+            fprintf(stderr, "codex_usage_refresh=%s\n", result[@"remaining"] ? "ok" : "unavailable");
+            [self refreshStatus];
+        });
+    });
+}
+
+- (void)toggleCodexUsage:(id)sender {
+    (void)sender;
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    [defaults setBool:![defaults boolForKey:@"HideCodexUsage"] forKey:@"HideCodexUsage"];
+    [self refreshStatus];
 }
 
 - (void)handleTransition:(NSDictionary *)status {
@@ -814,6 +887,32 @@ static int RunIKuuuReadOnlySelfTest(void) {
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
+        if (argc == 2 && strcmp(argv[1], "--codex-usage-ui-test") == 0) {
+            (void)NSApplication.sharedApplication;
+            [NSUserDefaults.standardUserDefaults setVolatileDomain:@{@"HideCodexUsage": @NO} forName:NSArgumentDomain];
+            GuardianAppDelegate *test = [GuardianAppDelegate new];
+            [test configureMenu];
+            test.usage = @{@"remaining": @72, @"windows": @[@{@"remaining": @72, @"minutes": @300, @"reset": @(NSDate.date.timeIntervalSince1970+3600)}]};
+            test.usageUpdatedAt = NSDate.date;
+            [test updateButton:GuardianAppearanceHealthy tooltip:@"test"];
+            NSCAssert([test.statusItem.button.title isEqual:@" 72%"], @"visible usage");
+            NSCAssert(!test.usageWindowItems.firstObject.hidden, @"window detail visible");
+            [NSUserDefaults.standardUserDefaults setVolatileDomain:@{@"HideCodexUsage": @YES} forName:NSArgumentDomain];
+            [test updateButton:GuardianAppearanceHealthy tooltip:@"test"];
+            NSCAssert(test.statusItem.button.title.length == 0 && test.statusItem.length == NSSquareStatusItemLength, @"compact mode");
+            [NSUserDefaults.standardUserDefaults setVolatileDomain:@{@"HideCodexUsage": @NO} forName:NSArgumentDomain];
+            test.usageUpdatedAt = [NSDate dateWithTimeIntervalSinceNow:-361];
+            [test updateButton:GuardianAppearanceHealthy tooltip:@"test"];
+            NSCAssert([test.statusItem.button.title isEqual:@" --"], @"stale quota hidden");
+            [NSStatusBar.systemStatusBar removeStatusItem:test.statusItem];
+            puts("guardian_usage_ui_test_ok=1"); return 0;
+        }
+        if (argc == 2 && strcmp(argv[1], "--codex-usage-test") == 0) {
+            NSDictionary *result = GuardianReadCodexUsage();
+            NSData *data = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
+            fwrite(data.bytes, 1, data.length, stdout); puts("");
+            return result[@"remaining"] ? 0 : 1;
+        }
         if (argc == 3 && strcmp(argv[1], "--self-test") == 0) return RunSelfTest([NSString stringWithUTF8String:argv[2]]);
         if (argc == 3 && strcmp(argv[1], "--render-app-icon") == 0) return WriteApplicationIcon([NSString stringWithUTF8String:argv[2]]);
         if (argc == 2 && strcmp(argv[1], "--ikuuu-self-test") == 0) return RunIKuuuReadOnlySelfTest();

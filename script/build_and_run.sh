@@ -21,15 +21,19 @@ STAGE_PLIST="$STAGE_BUNDLE/Contents/Info.plist"
 STAGE_ICONSET="$STAGE_ROOT/AppIcon.iconset"
 trap 'rm -rf "$STAGE_ROOT"' EXIT
 
-pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+# 构建不应停止已安装的守护程序；仅运行/安装阶段替换进程。
 mkdir -p "$BUILD_DIR" "$STAGE_MACOS" "$STAGE_RESOURCES" "$STAGE_ICONSET"
 clang -fobjc-arc -Wall -Wextra -Werror -I"$ROOT_DIR/Sources" \
   -framework Cocoa -framework UserNotifications -framework ApplicationServices \
   "$ROOT_DIR/Sources/ClashXGuardianStatus/main.m" \
   "$ROOT_DIR/Sources/GuardianStartPolicy.m" \
+  "$ROOT_DIR/Sources/GuardianCodexUsage.m" \
   "$ROOT_DIR/Sources/IKuuuNodeParser.m" \
   "$ROOT_DIR/Sources/IKuuuAccessibilityAdapter.m" \
   "$ROOT_DIR/Sources/IKuuuRequestCoordinator.m" -o "$STAGE_BINARY"
+clang -fobjc-arc -Wall -Wextra -Werror -I"$ROOT_DIR/Sources" -framework Foundation \
+  "$ROOT_DIR/Tests/GuardianCodexUsageTests.m" "$ROOT_DIR/Sources/GuardianCodexUsage.m" -o "$STAGE_ROOT/GuardianCodexUsageTests"
+"$STAGE_ROOT/GuardianCodexUsageTests"
 clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
   "$ROOT_DIR/Tests/GuardianStartPolicyTests.m" \
   "$ROOT_DIR/Sources/GuardianStartPolicy.m" -o "$STAGE_ROOT/GuardianStartPolicyTests"
@@ -53,6 +57,7 @@ clang -fobjc-arc -Wall -Wextra -Werror -I"$ROOT_DIR/Sources" \
 "$STAGE_ROOT/IKuuuRequestCoordinatorTests"
 "$STAGE_BINARY" --self-test "$ROOT_DIR/Tests/fixtures/healthy-status.json"
 "$STAGE_BINARY" --self-test "$ROOT_DIR/Tests/fixtures/switching-status.json"
+"$STAGE_BINARY" --codex-usage-ui-test
 install -m 0755 "$STAGE_BINARY" "$BUILD_DIR/$APP_NAME"
 
 ICON_SOURCE="$STAGE_ROOT/GuardianAppIcon.png"
@@ -83,8 +88,8 @@ cat >"$STAGE_PLIST" <<PLIST
   <key>CFBundleDisplayName</key><string>$DISPLAY_NAME</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
-  <key>CFBundleShortVersionString</key><string>2.4.3</string>
-  <key>CFBundleVersion</key><string>11</string>
+  <key>CFBundleShortVersionString</key><string>2.5.0</string>
+  <key>CFBundleVersion</key><string>12</string>
   <key>LSMinimumSystemVersion</key><string>$MIN_SYSTEM_VERSION</string>
   <key>LSUIElement</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
