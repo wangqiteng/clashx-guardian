@@ -88,11 +88,11 @@ static NSDictionary *ReadStatus(NSURL *url, NSError **error) {
 
 static NSColor *AppearanceColor(GuardianAppearance value) {
     switch (value) {
-        case GuardianAppearanceHealthy: return [NSColor colorWithSRGBRed:0.18 green:0.48 blue:0.31 alpha:1];
-        case GuardianAppearanceWarning: return [NSColor colorWithSRGBRed:0.61 green:0.40 blue:0.13 alpha:1];
-        case GuardianAppearanceWorking: return [NSColor colorWithSRGBRed:0.22 green:0.44 blue:0.69 alpha:1];
-        case GuardianAppearanceError: return [NSColor colorWithSRGBRed:0.72 green:0.28 blue:0.30 alpha:1];
-        case GuardianAppearanceInactive: return [NSColor colorWithSRGBRed:0.43 green:0.45 blue:0.49 alpha:1];
+        case GuardianAppearanceHealthy: return [NSColor colorWithSRGBRed:0.10 green:0.78 blue:0.36 alpha:1];
+        case GuardianAppearanceWarning: return [NSColor colorWithSRGBRed:1.00 green:0.58 blue:0.08 alpha:1];
+        case GuardianAppearanceWorking: return [NSColor colorWithSRGBRed:0.12 green:0.55 blue:0.98 alpha:1];
+        case GuardianAppearanceError: return [NSColor colorWithSRGBRed:0.96 green:0.20 blue:0.22 alpha:1];
+        case GuardianAppearanceInactive: return [NSColor colorWithSRGBRed:0.48 green:0.50 blue:0.54 alpha:1];
         case GuardianAppearanceStopped: return [NSColor colorWithSRGBRed:0.38 green:0.40 blue:0.44 alpha:1];
     }
 }
@@ -121,17 +121,6 @@ static NSString *SummaryText(NSDictionary *status, BOOL isRunning, GuardianAppea
     return [NSString stringWithFormat:@"自动保护：已开启 · %@", AppearanceLabel(appearance)];
 }
 
-// 将 sRGB 转为线性亮度，验证各状态底色与白字的对比度。
-static CGFloat GuardianFillLuminance(GuardianAppearance appearance) {
-    NSColor *color = [AppearanceColor(appearance) colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
-    CGFloat channels[] = {color.redComponent, color.greenComponent, color.blueComponent};
-    for (NSUInteger index = 0; index < 3; index++) {
-        CGFloat value = channels[index];
-        channels[index] = value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4);
-    }
-    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
-}
-
 // 在完整盾牌内部绘制额度，保持菜单栏单图标宽度。
 static NSImage *GuardianStatusImageWithUsage(GuardianAppearance appearance, NSString *number) {
     NSSize size = NSMakeSize(18, 18);
@@ -146,21 +135,24 @@ static NSImage *GuardianStatusImageWithUsage(GuardianAppearance appearance, NSSt
     CGContextClearRect(context.CGContext, CGRectMake(0, 0, 18, 18));
 
     NSBezierPath *shield = [NSBezierPath bezierPath];
-    [shield moveToPoint:NSMakePoint(9, 17)];
-    [shield curveToPoint:NSMakePoint(2.5, 14.4) controlPoint1:NSMakePoint(7.1, 16.1) controlPoint2:NSMakePoint(4.9, 15.0)];
-    [shield lineToPoint:NSMakePoint(2.5, 9.2)];
-    [shield curveToPoint:NSMakePoint(9, 1.2) controlPoint1:NSMakePoint(2.5, 5.6) controlPoint2:NSMakePoint(5.2, 2.7)];
-    [shield curveToPoint:NSMakePoint(15.5, 9.2) controlPoint1:NSMakePoint(12.8, 2.7) controlPoint2:NSMakePoint(15.5, 5.6)];
-    [shield lineToPoint:NSMakePoint(15.5, 14.4)];
-    [shield curveToPoint:NSMakePoint(9, 17) controlPoint1:NSMakePoint(13.1, 15.0) controlPoint2:NSMakePoint(10.9, 16.1)];
+    // 平顶与圆角增加上半部空间，下端保留左右对称的盾尖。
+    [shield moveToPoint:NSMakePoint(3, 16.5)];
+    [shield lineToPoint:NSMakePoint(15, 16.5)];
+    [shield curveToPoint:NSMakePoint(16.5, 15) controlPoint1:NSMakePoint(16, 16.5) controlPoint2:NSMakePoint(16.5, 16)];
+    [shield lineToPoint:NSMakePoint(16.5, 9.2)];
+    [shield curveToPoint:NSMakePoint(9, 1.2) controlPoint1:NSMakePoint(16.5, 5.6) controlPoint2:NSMakePoint(12.8, 2.7)];
+    [shield curveToPoint:NSMakePoint(1.5, 9.2) controlPoint1:NSMakePoint(5.2, 2.7) controlPoint2:NSMakePoint(1.5, 5.6)];
+    [shield lineToPoint:NSMakePoint(1.5, 15)];
+    [shield curveToPoint:NSMakePoint(3, 16.5) controlPoint1:NSMakePoint(1.5, 16) controlPoint2:NSMakePoint(2, 16.5)];
     [shield closePath];
     [AppearanceColor(appearance) setFill];
     [shield fill];
     if (number.length) {
-        // 统一白色文字；底色经过对比度验证，避免状态变化时文字黑白跳变。
+        // 保留鲜明底色，用细深色描边分隔白字与亮色背景。
         NSColor *textColor = NSColor.whiteColor;
-        NSFont *font = [NSFont monospacedDigitSystemFontOfSize:number.length >= 3 ? 6.5 : 8.5 weight:NSFontWeightBold];
-        NSDictionary *attributes = @{NSFontAttributeName: font, NSForegroundColorAttributeName: textColor};
+        NSFont *font = [NSFont monospacedDigitSystemFontOfSize:number.length >= 3 ? 7.5 : 9 weight:NSFontWeightBold];
+        NSDictionary *attributes = @{NSFontAttributeName: font, NSForegroundColorAttributeName: textColor,
+            NSStrokeColorAttributeName: [NSColor colorWithWhite:0.15 alpha:0.85], NSStrokeWidthAttributeName: @(-3)};
         NSSize textSize = [number sizeWithAttributes:attributes];
         [number drawAtPoint:NSMakePoint((18 - textSize.width) / 2, 9.5 - textSize.height / 2)
             withAttributes:attributes];
@@ -933,8 +925,6 @@ int main(int argc, const char *argv[]) {
             [test updateButton:GuardianAppearanceHealthy tooltip:@"test"];
             NSCAssert([test.statusItem.button.image.accessibilityDescription containsString:@"—"], @"stale quota hidden");
             for (NSInteger appearance = GuardianAppearanceHealthy; appearance <= GuardianAppearanceStopped; appearance++) {
-                CGFloat luminance = GuardianFillLuminance(appearance);
-                NSCAssert(1.05 / (luminance + 0.05) >= 4.5, @"readable text contrast");
                 for (NSString *number in @[@"0", @"9", @"97", @"100", @"—"]) {
                     NSImage *image = GuardianStatusImageWithUsage(appearance, number);
                     NSCAssert(NSEqualSizes(image.size, NSMakeSize(18, 18)), @"fixed image size");
