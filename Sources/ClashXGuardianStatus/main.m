@@ -3,6 +3,7 @@
 #import <os/log.h>
 #import <errno.h>
 #import <signal.h>
+#import <math.h>
 #import "GuardianStartPolicy.h"
 #import "IKuuuRequestCoordinator.h"
 #import "GuardianCodexUsage.h"
@@ -120,7 +121,19 @@ static NSString *SummaryText(NSDictionary *status, BOOL isRunning, GuardianAppea
     return [NSString stringWithFormat:@"自动保护：已开启 · %@", AppearanceLabel(appearance)];
 }
 
-static NSImage *GuardianStatusImage(GuardianAppearance appearance) {
+// 将 sRGB 转为线性亮度，用于选择对比度更高的黑色或白色文字。
+static CGFloat GuardianFillLuminance(GuardianAppearance appearance) {
+    NSColor *color = [AppearanceColor(appearance) colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    CGFloat channels[] = {color.redComponent, color.greenComponent, color.blueComponent};
+    for (NSUInteger index = 0; index < 3; index++) {
+        CGFloat value = channels[index];
+        channels[index] = value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4);
+    }
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+}
+
+// 在完整盾牌内部绘制额度，保持菜单栏单图标宽度。
+static NSImage *GuardianStatusImageWithUsage(GuardianAppearance appearance, NSString *number) {
     NSSize size = NSMakeSize(18, 18);
     NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc]
         initWithBitmapDataPlanes:NULL pixelsWide:36 pixelsHigh:36 bitsPerSample:8 samplesPerPixel:4
@@ -143,6 +156,16 @@ static NSImage *GuardianStatusImage(GuardianAppearance appearance) {
     [shield closePath];
     [AppearanceColor(appearance) setFill];
     [shield fill];
+    if (number.length) {
+        CGFloat luminance = GuardianFillLuminance(appearance);
+        NSColor *textColor = (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05)
+            ? NSColor.blackColor : NSColor.whiteColor;
+        NSFont *font = [NSFont monospacedDigitSystemFontOfSize:number.length >= 3 ? 6.5 : 8.5 weight:NSFontWeightBold];
+        NSDictionary *attributes = @{NSFontAttributeName: font, NSForegroundColorAttributeName: textColor};
+        NSSize textSize = [number sizeWithAttributes:attributes];
+        [number drawAtPoint:NSMakePoint((18 - textSize.width) / 2, 9.5 - textSize.height / 2)
+            withAttributes:attributes];
+    }
 
     [context flushGraphics];
     [NSGraphicsContext restoreGraphicsState];
@@ -151,7 +174,13 @@ static NSImage *GuardianStatusImage(GuardianAppearance appearance) {
     [image addRepresentation:bitmap];
     image.template = NO;
     image.accessibilityDescription = [NSString stringWithFormat:@"ClashX Guardian：%@", AppearanceLabel(appearance)];
+    if (number.length) image.accessibilityDescription = [image.accessibilityDescription stringByAppendingFormat:@"，Codex 剩余额度：%@", number];
     return image;
+}
+
+// 隐藏额度时保留原有纯色盾牌。
+static NSImage *GuardianStatusImage(GuardianAppearance appearance) {
+    return GuardianStatusImageWithUsage(appearance, nil);
 }
 
 static NSImage *GuardianApplicationIconImage(void) {
@@ -511,11 +540,11 @@ static int WriteApplicationIcon(NSString *path) {
     for (NSDictionary *window in self.usage[@"windows"])
         if ([window[@"reset"] doubleValue] <= NSDate.date.timeIntervalSince1970) fresh = NO;
     NSString *percent = fresh ? [NSString stringWithFormat:@"%@%%", self.usage[@"remaining"]] : @"--";
-    self.statusItem.length = showUsage ? NSVariableStatusItemLength : NSSquareStatusItemLength;
-    button.font = [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightMedium];
-    button.title = showUsage ? [@" " stringByAppendingString:percent] : @"";
-    button.image = GuardianStatusImage(appearance);
-    button.imagePosition = showUsage ? NSImageLeft : NSImageOnly;
+    self.statusItem.length = NSSquareStatusItemLength;
+    button.title = @"";
+    NSString *number = fresh ? [self.usage[@"remaining"] stringValue] : @"—";
+    button.image = GuardianStatusImageWithUsage(appearance, showUsage ? number : nil);
+    button.imagePosition = NSImageOnly;
     button.contentTintColor = nil;
     button.toolTip = [tooltip stringByAppendingFormat:@"\nCodex 剩余额度：%@（各有效窗口中较低值）", percent];
     self.usageToggleItem.state = showUsage ? NSControlStateValueOn : NSControlStateValueOff;
@@ -895,7 +924,7 @@ int main(int argc, const char *argv[]) {
             test.usage = @{@"remaining": @72, @"windows": @[@{@"remaining": @72, @"minutes": @300, @"reset": @(NSDate.date.timeIntervalSince1970+3600)}]};
             test.usageUpdatedAt = NSDate.date;
             [test updateButton:GuardianAppearanceHealthy tooltip:@"test"];
-            NSCAssert([test.statusItem.button.title isEqual:@" 72%"], @"visible usage");
+            NSCAssert(test.statusItem.button.title.length == 0 && test.statusItem.length == NSSquareStatusItemLength && [test.statusItem.button.image.accessibilityDescription containsString:@"72"], @"usage inside fixed width shield");
             NSCAssert(!test.usageWindowItems.firstObject.hidden, @"window detail visible");
             [NSUserDefaults.standardUserDefaults setVolatileDomain:@{@"HideCodexUsage": @YES} forName:NSArgumentDomain];
             [test updateButton:GuardianAppearanceHealthy tooltip:@"test"];
@@ -903,7 +932,17 @@ int main(int argc, const char *argv[]) {
             [NSUserDefaults.standardUserDefaults setVolatileDomain:@{@"HideCodexUsage": @NO} forName:NSArgumentDomain];
             test.usageUpdatedAt = [NSDate dateWithTimeIntervalSinceNow:-361];
             [test updateButton:GuardianAppearanceHealthy tooltip:@"test"];
-            NSCAssert([test.statusItem.button.title isEqual:@" --"], @"stale quota hidden");
+            NSCAssert([test.statusItem.button.image.accessibilityDescription containsString:@"—"], @"stale quota hidden");
+            for (NSInteger appearance = GuardianAppearanceHealthy; appearance <= GuardianAppearanceStopped; appearance++) {
+                CGFloat luminance = GuardianFillLuminance(appearance);
+                NSCAssert(MAX((luminance + 0.05) / 0.05, 1.05 / (luminance + 0.05)) >= 4.5, @"readable text contrast");
+                for (NSString *number in @[@"0", @"9", @"97", @"100", @"—"]) {
+                    NSImage *image = GuardianStatusImageWithUsage(appearance, number);
+                    NSCAssert(NSEqualSizes(image.size, NSMakeSize(18, 18)), @"fixed image size");
+                    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"guardian-shield-%ld-%@.png", (long)appearance, number]];
+                    [[(NSBitmapImageRep *)image.representations.firstObject representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:YES];
+                }
+            }
             [NSStatusBar.systemStatusBar removeStatusItem:test.statusItem];
             puts("guardian_usage_ui_test_ok=1"); return 0;
         }
