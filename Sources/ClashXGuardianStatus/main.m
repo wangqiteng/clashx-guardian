@@ -135,24 +135,30 @@ static NSImage *GuardianStatusImageWithUsage(GuardianAppearance appearance, NSSt
     CGContextClearRect(context.CGContext, CGRectMake(0, 0, 18, 18));
 
     NSBezierPath *shield = [NSBezierPath bezierPath];
-    // 平顶与圆角增加上半部空间，下端保留左右对称的盾尖。
-    [shield moveToPoint:NSMakePoint(3, 16.5)];
-    [shield lineToPoint:NSMakePoint(15, 16.5)];
-    [shield curveToPoint:NSMakePoint(16.5, 15) controlPoint1:NSMakePoint(16, 16.5) controlPoint2:NSMakePoint(16.5, 16)];
-    [shield lineToPoint:NSMakePoint(16.5, 9.2)];
-    [shield curveToPoint:NSMakePoint(9, 1.2) controlPoint1:NSMakePoint(16.5, 5.6) controlPoint2:NSMakePoint(12.8, 2.7)];
-    [shield curveToPoint:NSMakePoint(1.5, 9.2) controlPoint1:NSMakePoint(5.2, 2.7) controlPoint2:NSMakePoint(1.5, 5.6)];
-    [shield lineToPoint:NSMakePoint(1.5, 15)];
-    [shield curveToPoint:NSMakePoint(3, 16.5) controlPoint1:NSMakePoint(1.5, 16) controlPoint2:NSMakePoint(2, 16.5)];
+    // 恢复上缘微拱的盾牌轮廓，保持左右对称，避免平顶看起来像标签。
+    [shield moveToPoint:NSMakePoint(9, 17)];
+    [shield curveToPoint:NSMakePoint(2, 14.5) controlPoint1:NSMakePoint(7, 16.1) controlPoint2:NSMakePoint(4.5, 15)];
+    [shield lineToPoint:NSMakePoint(2, 9.2)];
+    [shield curveToPoint:NSMakePoint(9, 1.2) controlPoint1:NSMakePoint(2, 5.6) controlPoint2:NSMakePoint(5.2, 2.7)];
+    [shield curveToPoint:NSMakePoint(16, 9.2) controlPoint1:NSMakePoint(12.8, 2.7) controlPoint2:NSMakePoint(16, 5.6)];
+    [shield lineToPoint:NSMakePoint(16, 14.5)];
+    [shield curveToPoint:NSMakePoint(9, 17) controlPoint1:NSMakePoint(13.5, 15) controlPoint2:NSMakePoint(11, 16.1)];
     [shield closePath];
     [AppearanceColor(appearance) setFill];
     [shield fill];
     if (number.length) {
-        // 保留鲜明底色，用细深色描边分隔白字与亮色背景。
-        NSColor *textColor = NSColor.whiteColor;
-        NSFont *font = [NSFont monospacedDigitSystemFontOfSize:number.length >= 3 ? 7.5 : 9 weight:NSFontWeightBold];
-        NSDictionary *attributes = @{NSFontAttributeName: font, NSForegroundColorAttributeName: textColor,
-            NSStrokeColorAttributeName: [NSColor colorWithWhite:0.15 alpha:0.85], NSStrokeWidthAttributeName: @(-3)};
+        // 小字号描边会侵占笔画；用实心粗体与高对比度前景保证可读性。
+        NSColor *fill = [AppearanceColor(appearance) colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+        CGFloat channels[] = {fill.redComponent, fill.greenComponent, fill.blueComponent};
+        for (NSUInteger index = 0; index < 3; index++) {
+            CGFloat value = channels[index];
+            channels[index] = value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4);
+        }
+        CGFloat luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+        NSColor *textColor = (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05)
+            ? NSColor.blackColor : NSColor.whiteColor;
+        NSFont *font = [NSFont monospacedDigitSystemFontOfSize:number.length >= 3 ? 7 : 9 weight:NSFontWeightHeavy];
+        NSDictionary *attributes = @{NSFontAttributeName: font, NSForegroundColorAttributeName: textColor};
         NSSize textSize = [number sizeWithAttributes:attributes];
         [number drawAtPoint:NSMakePoint((18 - textSize.width) / 2, 9.5 - textSize.height / 2)
             withAttributes:attributes];
