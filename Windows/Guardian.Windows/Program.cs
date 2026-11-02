@@ -34,7 +34,8 @@ internal sealed class TrayApp : Forms.ApplicationContext
     private readonly Forms.ToolStripMenuItem[] eventItems = Enumerable.Range(0, 3).Select(_ => new Forms.ToolStripMenuItem { Enabled = false }).ToArray();
     private readonly RecentEvents recentEvents = Storage.LoadRecentEvents();
     private readonly Forms.Form dispatcher = new();
-    private readonly NetworkProbe probe = new();
+    private readonly NetworkProbe probe;
+    private readonly Func<IController>? controllerFactory;
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly FailureWindow failure = new();
     private readonly CancellationTokenSource lifetime = new();
@@ -64,8 +65,10 @@ internal sealed class TrayApp : Forms.ApplicationContext
     private TimeSpan nextCheck, nextRecovery;
     private string route = "", message = "正在启动", detail = "", lastLogged = "", lastProbeLogged = "";
 
-    public TrayApp()
+    public TrayApp(NetworkProbe? networkProbe = null, Func<IController>? controllerFactory = null, bool showWelcome = true)
     {
+        probe = networkProbe ?? new NetworkProbe();
+        this.controllerFactory = controllerFactory;
         settings = Storage.Load();
         _ = dispatcher.Handle;
         foreach (var (key, color) in new[] { ("green", Color.FromArgb(83, 162, 125)), ("amber", Color.FromArgb(210, 162, 70)),
@@ -108,8 +111,8 @@ internal sealed class TrayApp : Forms.ApplicationContext
         timer.Tick += (_, _) => { if (!exiting && clock.Elapsed >= nextUsage && usageTask is not { IsCompleted: false }) usageTask = RefreshUsageAsync(); if (enabled && !busy && clock.Elapsed >= nextCheck) BeginCheck(false); };
         timer.Start();
         Update("amber", "已开启，等待检测");
-        Storage.Log("Guardian 0.1.6 启动；不自动启动 iKuuu，不设置开机自启");
-        if (!File.Exists(Storage.ConfigPath))
+        Storage.Log("Guardian 0.1.7 启动；不自动启动 iKuuu，不设置开机自启");
+        if (showWelcome && !File.Exists(Storage.ConfigPath))
         {
             tray.ShowBalloonTip(7000, "Guardian 已开始检测", "盾牌在右下角托盘，可能位于隐藏图标内。已启用官方界面恢复（0.17.5），双击查看详情。", Forms.ToolTipIcon.Info);
             // 首次使用明确展示能力边界，而不是把检测模式伪装为完整自动保护。
@@ -199,7 +202,7 @@ internal sealed class TrayApp : Forms.ApplicationContext
                 }
                 Update("amber", "正在测速并验证候选节点");
                 using var api = settings.AllowSwitch ? new ClashController(settings.ControllerUrl, Storage.ReadSecret()) : null;
-                IController adapter = api is not null ? api : new NativeController();
+                IController adapter = controllerFactory?.Invoke() ?? (api is not null ? api : new NativeController());
                 var guard = new GuardedController(adapter, () =>
                 {
                     if (!ClientProcess.Running()) throw new InvalidOperationException("iKuuu 已退出，停止切换");
@@ -262,7 +265,7 @@ internal sealed class TrayApp : Forms.ApplicationContext
         "iKuuu Guardian 状态");
 
     private static void ShowHelp() => Forms.MessageBox.Show(
-        "Windows 修复版 0.1.6\n\n1. 自行启动并连接 iKuuu，再启动 Guardian。\n2. 托盘绿色：探针可达；黄色：确认中/需要配置；红色：持续异常；灰色：暂停/等待客户端。\n" +
+        "Windows 修复版 0.1.7\n\n1. 自行启动并连接 iKuuu，再启动 Guardian。\n2. 托盘绿色：探针可达；黄色：确认中/需要配置；红色：持续异常；灰色：暂停/等待客户端。\n" +
         "3. 默认使用 iKuuu 0.17.5 官方界面进行测速与切换；其他版本会提示不兼容。可在配置窗口关闭，或启用 Controller 模式。\n" +
         "4. 恢复通过原生控件操作，不移动鼠标；请让客户端停留在服务器页面，可最小化且不会自动展开。切换后验证 OpenAI API 和公共网络，失败尝试回退原节点。\n" +
         "5. 托盘退出会结束检测和恢复任务；不安装后台服务，不设置开机自启。\n\n" +
