@@ -39,6 +39,23 @@ internal sealed class TrayApp : Forms.ApplicationContext
     private readonly FailureWindow failure = new();
     private readonly CancellationTokenSource lifetime = new();
     private Task? diagnosticTask;
+    private Task? usageTask;
+    private readonly Forms.ToolStripMenuItem usageItem = new("Codex 额度：尚未读取") { Enabled = false };
+    private readonly Forms.ToolStripMenuItem usageRefresh = new("刷新 Codex 额度");
+    private TimeSpan nextUsage;
+
+    // 额度查询与网络检测独立，限制为每三分钟一次。
+    private async Task RefreshUsageAsync()
+    {
+        if (exiting || usageTask is { IsCompleted: false }) return;
+        usageRefresh.Enabled = false;
+        usageItem.Text = "Codex 额度：正在读取…";
+        string result = await CodexUsage.ReadAsync(lifetime.Token);
+        if (exiting) return;
+        usageItem.Text = "Codex 额度（桌面内置组件）\n" + result + $"\n更新于 {DateTime.Now:HH:mm:ss}";
+        nextUsage = clock.Elapsed + TimeSpan.FromMinutes(3);
+        usageRefresh.Enabled = true;
+    }
     private readonly Dictionary<string, Icon> icons = new();
     private Settings settings;
     private CancellationTokenSource? operation;
@@ -55,6 +72,9 @@ internal sealed class TrayApp : Forms.ApplicationContext
             ("red", Color.FromArgb(196, 91, 91)), ("gray", Color.FromArgb(140, 146, 153)) }) icons[key] = Shield(color);
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add(stateItem);
+        menu.Items.Add(usageItem);
+        menu.Items.Add(usageRefresh);
+        usageRefresh.Click += (_, _) => { if (usageTask is not { IsCompleted: false }) usageTask = RefreshUsageAsync(); };
         menu.Items.Add("查看详细状态", null, (_, _) => ShowStatus());
         menu.Items.Add(new Forms.ToolStripSeparator());
         startItem.Click += (_, _) => { enabled = true; failure.Reset(); nextCheck = TimeSpan.Zero; nextRecovery = TimeSpan.Zero; Update("amber", "检测已开启"); };
@@ -85,10 +105,10 @@ internal sealed class TrayApp : Forms.ApplicationContext
         tray.Text = "iKuuu Guardian：启动中";
         tray.DoubleClick += (_, _) => ShowStatus();
         tray.Visible = true;
-        timer.Tick += (_, _) => { if (enabled && !busy && clock.Elapsed >= nextCheck) BeginCheck(false); };
+        timer.Tick += (_, _) => { if (!exiting && clock.Elapsed >= nextUsage && usageTask is not { IsCompleted: false }) usageTask = RefreshUsageAsync(); if (enabled && !busy && clock.Elapsed >= nextCheck) BeginCheck(false); };
         timer.Start();
         Update("amber", "已开启，等待检测");
-        Storage.Log("Guardian 0.1.4 启动；不自动启动 iKuuu，不设置开机自启");
+        Storage.Log("Guardian 0.1.6 启动；不自动启动 iKuuu，不设置开机自启");
         if (!File.Exists(Storage.ConfigPath))
         {
             tray.ShowBalloonTip(7000, "Guardian 已开始检测", "盾牌在右下角托盘，可能位于隐藏图标内。已启用官方界面恢复（0.17.5），双击查看详情。", Forms.ToolTipIcon.Info);
@@ -242,7 +262,7 @@ internal sealed class TrayApp : Forms.ApplicationContext
         "iKuuu Guardian 状态");
 
     private static void ShowHelp() => Forms.MessageBox.Show(
-        "Windows 修复版 0.1.4\n\n1. 自行启动并连接 iKuuu，再启动 Guardian。\n2. 托盘绿色：探针可达；黄色：确认中/需要配置；红色：持续异常；灰色：暂停/等待客户端。\n" +
+        "Windows 修复版 0.1.6\n\n1. 自行启动并连接 iKuuu，再启动 Guardian。\n2. 托盘绿色：探针可达；黄色：确认中/需要配置；红色：持续异常；灰色：暂停/等待客户端。\n" +
         "3. 默认使用 iKuuu 0.17.5 官方界面进行测速与切换；其他版本会提示不兼容。可在配置窗口关闭，或启用 Controller 模式。\n" +
         "4. 恢复通过原生控件操作，不移动鼠标；请让客户端停留在服务器页面，可最小化且不会自动展开。切换后验证 OpenAI API 和公共网络，失败尝试回退原节点。\n" +
         "5. 托盘退出会结束检测和恢复任务；不安装后台服务，不设置开机自启。\n\n" +
@@ -284,6 +304,7 @@ internal sealed class TrayApp : Forms.ApplicationContext
         Update("gray", "正在停止并完成回退…");
         await StopOperationAsync();
         if (diagnosticTask != null) await diagnosticTask;
+        if (usageTask != null) await usageTask;
         RecordEvent("Guardian 已停止并退出");
         tray.Visible = false;
         ExitThread();

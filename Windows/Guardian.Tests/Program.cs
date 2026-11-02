@@ -4,6 +4,22 @@ using Guardian.Core;
 
 int passed = 0;
 void Check(bool condition, string name) { if (!condition) throw new Exception("FAIL: " + name); passed++; Console.WriteLine("PASS: " + name); }
+// 检查桌面定位不会退回 PATH 或把前端当作组件。
+string desktopRoot = Path.Combine(Path.GetTempPath(), "guardian-desktop-fixture");
+string desktopFrontend = Path.Combine(desktopRoot, "Codex.exe");
+string desktopBackend = Path.Combine(desktopRoot, "resources", "codex.exe");
+Check(CodexUsage.FindDesktopComponent(desktopFrontend, p => p == desktopBackend) == desktopBackend, "desktop bundled component discovery");
+Check(CodexUsage.FindDesktopComponent(desktopFrontend, p => p == desktopFrontend) == null, "never launch desktop frontend as CLI");
+Check(CodexUsage.FindDesktopComponent(desktopBackend, p => p == desktopBackend) == desktopBackend, "running bundled backend discovery");
+// 验证额度解析的正常、缺失与过期边界。
+string quotaJson = System.Text.Json.JsonSerializer.Serialize(new { rateLimits = new { primary = new { usedPercent = 23, windowDurationMins = 300, resetsAt = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds() } } });
+using (var quota = System.Text.Json.JsonDocument.Parse(quotaJson)) Check(CodexUsage.Parse(quota.RootElement).Contains("剩余 77%"), "quota remaining and used percentage");
+foreach (string invalid in new[] { "{}", "{\"rateLimits\":{}}", "{\"rateLimits\":{\"primary\":{\"usedPercent\":101,\"windowDurationMins\":300,\"resetsAt\":1}}}" })
+{
+    bool rejected = false;
+    try { using var quota = System.Text.Json.JsonDocument.Parse(invalid); CodexUsage.Parse(quota.RootElement); } catch { rejected = true; }
+    Check(rejected, "missing or expired quota is not zero");
+}
 var eventTime = DateTimeOffset.Parse("2026-10-12T10:00:00+08:00");
 var history = new RecentEvents();
 foreach (var text in new[] { "已启动", "线路正常", "线路异常", "线路恢复" }) history.Record(text, eventTime = eventTime.AddMinutes(1));

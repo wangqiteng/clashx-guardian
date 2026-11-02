@@ -1,4 +1,4 @@
-# iKuuu Guardian Windows 0.1.4
+# iKuuu Guardian Windows 0.1.6
 
 适配 iKuuuVPN 0.17.5 的 Windows x64 修复版本。使用 Windows UI Automation 的 InvokePattern 调用客户端控件，不移动鼠标或按坐标点击。
 
@@ -57,3 +57,11 @@ dotnet publish Windows/Guardian.Windows/Guardian.Windows.csproj -c Release -r wi
 退出后删除解压目录即可卸载；专用日志配置目录可按需删除。原软件包未覆盖。
 
 UI Automation 不提供原子比较并切换，最后一次核对与控件接受操作之间仍有极短竞争窗口。恢复操作期间请避免手动修改 iKuuu 节点。
+
+## 0.1.6：Codex 桌面额度兼容
+
+无需额外安装 CLI。先打开已登录的 Codex 桌面版，再点击托盘菜单“刷新 Codex 额度”。程序从运行中的 Codex/ChatGPT 进程定位 resources/codex.exe 内置组件，后台调用只读账号和额度接口。不会启动桌面前端，也不会退回 PATH 中可能使用其他账号的 CLI。未识别、多个安装实例冲突或登录态不可复用时，明确提示在 Codex 内查看。
+
+菜单显示接口返回的账号、各窗口已用/剩余百分比和本地重置时间。请与桌面端账号核对：找到内置组件不代表能证明其账号就是桌面端当前账号；内存登录、自定义数据目录和不同安装布局可能无法兼容。不复制认证文件或令牌，不操作登录、退出或切换账号。
+
+每三分钟自动刷新，20 秒超时；失败不影响网络保护。此版本在 Mac 上交叉编译并做回归测试，尚未在实际 Windows Codex 桌面安装上验证进程发现、登录复用和额度显示。
