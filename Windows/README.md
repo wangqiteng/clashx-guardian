@@ -1,4 +1,4 @@
-# iKuuu Guardian Windows 0.1.7
+# iKuuu Guardian Windows 0.1.8
 
 适配 iKuuuVPN 0.17.5 的 Windows x64 修复版本。使用 Windows UI Automation 的 InvokePattern 调用客户端控件，不移动鼠标或按坐标点击。
 
@@ -18,6 +18,8 @@
 记录保存在 `%LOCALAPPDATA%\IKuuuGuardian\recent-events.json`，重启后保留。记录可能含节点名称，分享前请检查；不会自动上传。
 
 ## 本次修复
+
+0.1.8 将额度信息拆为独立单行菜单项，修复所有菜单行被多行文字撑高的问题；菜单失去焦点后关闭，并保留 Esc 关闭及快速重新打开。
 
 0.1.7 修正诊断文件版本号，改为读取实际程序集版本，避免继续误报为 0.1.4。自动恢复逻辑增加可注入的测试依赖，默认运行行为不变，用于验证托盘定时检测完整触发恢复。
 

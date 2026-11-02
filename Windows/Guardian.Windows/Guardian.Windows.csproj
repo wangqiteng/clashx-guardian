@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>IKuuuGuardian</AssemblyName>
-    <Version>0.1.7</Version>
+    <Version>0.1.8</Version>
     <ApplicationIcon>Assets/guardian.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>

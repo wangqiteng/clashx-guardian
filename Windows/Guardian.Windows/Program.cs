@@ -42,6 +42,7 @@ internal sealed class TrayApp : Forms.ApplicationContext
     private Task? diagnosticTask;
     private Task? usageTask;
     private readonly Forms.ToolStripMenuItem usageItem = new("Codex 额度：尚未读取") { Enabled = false };
+    private readonly Forms.ToolStripMenuItem[] usageDetails = Enumerable.Range(0, 4).Select(_ => new Forms.ToolStripMenuItem { Enabled = false, Visible = false }).ToArray();
     private readonly Forms.ToolStripMenuItem usageRefresh = new("刷新 Codex 额度");
     private TimeSpan nextUsage;
 
@@ -53,9 +54,20 @@ internal sealed class TrayApp : Forms.ApplicationContext
         usageItem.Text = "Codex 额度：正在读取…";
         string result = await CodexUsage.ReadAsync(lifetime.Token);
         if (exiting) return;
-        usageItem.Text = "Codex 额度（桌面内置组件）\n" + result + $"\n更新于 {DateTime.Now:HH:mm:ss}";
+        RenderUsage(result);
         nextUsage = clock.Elapsed + TimeSpan.FromMinutes(3);
         usageRefresh.Enabled = true;
+    }
+    private void RenderUsage(string result)
+    {
+        usageItem.Text = "Codex 额度（桌面内置组件）";
+        var lines = result.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Take(3).Append($"更新于 {DateTime.Now:HH:mm:ss}").ToArray();
+        for (var i = 0; i < usageDetails.Length; i++)
+        {
+            usageDetails[i].Visible = i < lines.Length;
+            usageDetails[i].Text = i < lines.Length ? lines[i].Replace("&", "&&") : "";
+        }
     }
     private readonly Dictionary<string, Icon> icons = new();
     private Settings settings;
@@ -73,9 +85,10 @@ internal sealed class TrayApp : Forms.ApplicationContext
         _ = dispatcher.Handle;
         foreach (var (key, color) in new[] { ("green", Color.FromArgb(83, 162, 125)), ("amber", Color.FromArgb(210, 162, 70)),
             ("red", Color.FromArgb(196, 91, 91)), ("gray", Color.FromArgb(140, 146, 153)) }) icons[key] = Shield(color);
-        var menu = new Forms.ContextMenuStrip();
+        var menu = new TrayMenu();
         menu.Items.Add(stateItem);
         menu.Items.Add(usageItem);
+        menu.Items.AddRange(usageDetails);
         menu.Items.Add(usageRefresh);
         usageRefresh.Click += (_, _) => { if (usageTask is not { IsCompleted: false }) usageTask = RefreshUsageAsync(); };
         menu.Items.Add("查看详细状态", null, (_, _) => ShowStatus());
@@ -111,7 +124,7 @@ internal sealed class TrayApp : Forms.ApplicationContext
         timer.Tick += (_, _) => { if (!exiting && clock.Elapsed >= nextUsage && usageTask is not { IsCompleted: false }) usageTask = RefreshUsageAsync(); if (enabled && !busy && clock.Elapsed >= nextCheck) BeginCheck(false); };
         timer.Start();
         Update("amber", "已开启，等待检测");
-        Storage.Log("Guardian 0.1.7 启动；不自动启动 iKuuu，不设置开机自启");
+        Storage.Log("Guardian 0.1.8 启动；不自动启动 iKuuu，不设置开机自启");
         if (showWelcome && !File.Exists(Storage.ConfigPath))
         {
             tray.ShowBalloonTip(7000, "Guardian 已开始检测", "盾牌在右下角托盘，可能位于隐藏图标内。已启用官方界面恢复（0.17.5），双击查看详情。", Forms.ToolTipIcon.Info);
@@ -265,7 +278,7 @@ internal sealed class TrayApp : Forms.ApplicationContext
         "iKuuu Guardian 状态");
 
     private static void ShowHelp() => Forms.MessageBox.Show(
-        "Windows 修复版 0.1.7\n\n1. 自行启动并连接 iKuuu，再启动 Guardian。\n2. 托盘绿色：探针可达；黄色：确认中/需要配置；红色：持续异常；灰色：暂停/等待客户端。\n" +
+        "Windows 修复版 0.1.8\n\n1. 自行启动并连接 iKuuu，再启动 Guardian。\n2. 托盘绿色：探针可达；黄色：确认中/需要配置；红色：持续异常；灰色：暂停/等待客户端。\n" +
         "3. 默认使用 iKuuu 0.17.5 官方界面进行测速与切换；其他版本会提示不兼容。可在配置窗口关闭，或启用 Controller 模式。\n" +
         "4. 恢复通过原生控件操作，不移动鼠标；请让客户端停留在服务器页面，可最小化且不会自动展开。切换后验证 OpenAI API 和公共网络，失败尝试回退原节点。\n" +
         "5. 托盘退出会结束检测和恢复任务；不安装后台服务，不设置开机自启。\n\n" +
