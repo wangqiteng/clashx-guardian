@@ -363,7 +363,7 @@ sub resolve_proxy_url {
 }
 
 sub clashx_running {
-    return process_running('ClashX Pro') || process_running('ClashX');
+    return process_running('ClashX Pro') || process_running('ClashX') || process_running('ClashX Meta');
 }
 
 sub resolve_clash_controller {
