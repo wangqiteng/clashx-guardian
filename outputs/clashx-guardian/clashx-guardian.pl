@@ -63,7 +63,9 @@ my $secret             = $cfg{CONTROLLER_SECRET} // '';
 $secret = clashx_saved_secret() if $secret =~ /^(?:auto)?$/i;
 my $require_sys_proxy  = bool_cfg('REQUIRE_SYSTEM_PROXY', 1);
 my $exclude_pattern    = $cfg{EXCLUDE_PATTERN} || '(?:DIRECT|REJECT|PASS|台湾|台灣|台北|Taiwan|Taipei)';
-my $exclude_re         = eval { qr/$exclude_pattern/i };
+# 免费日本节点始终排除，兼容已安装版本的自定义排除配置。
+my $free_japan_pattern = q{(?:(?:免费|免費|free).*?(?:日本|Japan|🇯🇵)|(?:日本|Japan|🇯🇵).*?(?:免费|免費|free))};
+my $exclude_re         = eval { qr/(?:$exclude_pattern|$free_japan_pattern)/i };
 die "Invalid EXCLUDE_PATTERN: $@\n" if $@;
 
 my $log_file = expand_path($cfg{LOG_FILE} || '~/Library/Logs/ClashXGuardian.log');
@@ -923,6 +925,10 @@ sub run_internal_self_test {
         '/bin/sh', '-c', 'echo expected-noise >&2; exit 17');
     die "quiet command runner leaked or lost exit status\n"
         unless defined($quiet_output) && $quiet_output eq '' && $quiet_status == 17;
+    die "Free Japanese nodes must be excluded while paid nodes remain available\n"
+        unless '🇯🇵 免费-日本1-Ver.7' =~ $exclude_re
+            && 'Japan Free 2' =~ $exclude_re
+            && '🇯🇵 日本Y01 | IEPL' !~ $exclude_re;
     die "Taiwan nodes must be excluded\n"
         unless '🇹🇼 台湾Y01' =~ $exclude_re && '🇸🇬 新加坡Y02' !~ $exclude_re;
     $candidate_cursor = 0;
